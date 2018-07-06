@@ -1,20 +1,19 @@
 # Customize below to fit your system
 
-COMPONENTS = \
-	libixp \
-	libixp_pthread
-
 # Paths
 PREFIX = /usr/local
   BIN = $(PREFIX)/bin
   MAN = $(PREFIX)/share/man
+  DOC = $(PREFIX)/share/doc/wmii
   ETC = $(PREFIX)/etc
   LIBDIR = $(PREFIX)/lib
   INCLUDE = $(PREFIX)/include
 
 # Includes and libs
-INCPATH = .:$(ROOT)/include:$(INCLUDE):/usr/include
+INCLUDES = -I. -I$(ROOT)/include -I$(INCLUDE) -I/usr/include
 LIBS = -L$(ROOT)/lib -L/usr/lib
+
+TERMINAL = xterm
 
 # Flags
 include $(ROOT)/mk/gcc.mk
@@ -30,8 +29,6 @@ LD = cc
 # Archiver
 AR = ar crs
 
-AWKPATH = $$(which awk)
-P9PATHS = ${PLAN9}:"'$${HOME}/plan9'":/usr/local/plan9:/usr/local/9:/opt/plan9:/opt/9:/usr/plan9:/usr/9
 # Your make shell. By default, the first found of /bin/dash, /bin/ksh,
 # /bin/sh. Except with bsdmake, which assumes /bin/sh is sane. bash and zsh
 # are painfully slow, and should be avoided.

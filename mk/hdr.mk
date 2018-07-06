@@ -1,12 +1,18 @@
 FILTER = cat
-EXCFLAGS = -I$$(echo $(INCPATH)|sed 's/:/ -I/g') -D_XOPEN_SOURCE=600
-COMPILE= CC="$(CC)" CFLAGS="$(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES))" $(ROOT)/util/compile
-COMPILEPIC= CC="$(CC)" CFLAGS="$(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES)) $(SOCFLAGS)" $(ROOT)/util/compile
-LINK= LD="$(LD)" LDFLAGS="$(LDFLAGS) $$(pkg-config --libs $(PACKAGES))" $(ROOT)/util/link
-LINKSO= LD="$(LD)" LDFLAGS="$(SOLDFLAGS) $(SHARED) $$(pkg-config --libs $(PACKAGES))" $(ROOT)/util/link
+
+EXCFLAGS = $(INCLUDES) -D_XOPEN_SOURCE=600
+
+COMPILE    = $(ROOT)/util/compile "$(CC)" "$(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES))"
+COMPILEPIC = $(ROOT)/util/compile "$(CC)" "$(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES)) $(SOCFLAGS)"
+
+LINK   = $(ROOT)/util/link "$(LD)" "$$(pkg-config --libs $(PACKAGES)) $(LDFLAGS)"
+LINKSO = $(ROOT)/util/link "$(LD)" "$$(pkg-config --libs $(PACKAGES)) $(SOLDFLAGS) $(SHARED)"
+
 CLEANNAME=$(ROOT)/util/cleanname
+
 SOEXT=so
 TAGFILES=
+
 CTAGS=ctags
 
 PACKAGES = 2>/dev/null
@@ -18,9 +24,10 @@ MKCFGSH=if test -f $(ROOT)/config.local.mk; then echo $(ROOT)/config.local.mk; e
 MKCFG:=${shell $(MKCFGSH)}
 MKCFG!=${MKCFGSH}
 include $(MKCFG)
+
 # and this:
 # Try to find a sane shell. /bin/sh is a last resort, because it's
-# usually bash on Linux, which means, it's painfully slow.
+# usually bash on Linux, which means it's painfully slow.
 BINSH := $(shell \
 	   if [ -x /bin/dash ]; then echo /bin/dash; \
 	   elif [ -x /bin/ksh ]; then echo /bin/ksh; \
@@ -28,12 +35,13 @@ BINSH := $(shell \
 BINSH != echo /bin/sh
 
 .SILENT:
-.SUFFIXES: .O .o .o_pic .c .sh .rc .$(SOEXT) .awk .1 .man1 .depend .install .uninstall .clean
+.SUFFIXES: .out .o .o_pic .c .pdf .sh .rc .$(SOEXT) .awk .1 .man1 .depend .install .uninstall .clean
 all:
 
 .c.depend:
 	echo MKDEP $<
-	$(MKDEP) $(EXCFLAGS) $(CFLAGS) $< >>.depend
+	[ "$$noisycc" = 1 ] && echo $(MKDEP) $(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES)) $< || true
+	$(MKDEP) $(EXCFLAGS) $(CFLAGS) $$(pkg-config --cflags $(PACKAGES)) $< >>.depend
 
 .sh.depend .rc.depend .1.depend .awk.depend:
 	:
@@ -43,61 +51,67 @@ all:
 .c.o_pic:
 	$(COMPILEPIC) $@ $<
 
-.o.O:
+.o.out:
 	$(LINK) $@ $<
-.c.O:
+.c.out:
 	$(COMPILE) ${<:.c=.o} $<
 	$(LINK) $@ ${<:.c=.o}
 
-.sh.O:
+.rc.out .awk.out .sh.out:
 	echo FILTER $(BASE)$<
-	$(FILTER) $< >$@
-	sh -n $@
-	chmod 0755 $@
-.rc.O .awk.O:
-	echo FILTER $(BASE)$<
+	[ -n "${<:%.sh=}" ] || sh -n $<
 	$(FILTER) $< >$@
 	chmod 0755 $@
+
 .man1.1:
 	echo TXT2TAGS $(BASE)$<
-	txt2tags -o- $< | $(FILTER) >$@
+	txt2tags -o- $< >$@
 
-.O.install:
-	echo INSTALL $$($(CLEANNAME) $(BASE)$*)
-	cp -f $< $(DESTDIR)$(BIN)/$*
-	chmod 0755 $(DESTDIR)$(BIN)/$* 
-.O.uninstall:
-	echo UNINSTALL $$($(CLEANNAME) $(BASE)$*)
-	rm -f $(DESTDIR)$(BIN)/$* 
+INSTALL= _install() { set -e; \
+		 dashb=$$1; [ $$1 = -b ] && shift; \
+		 d=$$(dirname $$3); \
+		 if [ ! -d $(DESTDIR)$$d ]; then echo MKDIR $$d; mkdir -p $(DESTDIR)$$d; fi; \
+		 echo INSTALL $$($(CLEANNAME) $(BASE)$$2); \
+		 if [ "$$dashb" = -b ]; \
+		 then cp -f $$2 $(DESTDIR)$$3; \
+		 else $(FILTER) <$$2 >$(DESTDIR)$$3; \
+		 fi; \
+		 chmod $$1 $(DESTDIR)$$3; \
+	 }; _install
+UNINSTALL= _uninstall() { set -e; \
+	           echo UNINSTALL $$($(CLEANNAME) $(BASE)$$2); \
+		   rm -f $(DESTDIR)$$3; \
+	   }; _uninstall
+
+.out.install:
+	$(INSTALL) -b 0755 $< $(BIN)/$*
+.out.uninstall:
+	$(UNINSTALL) $< $(BIN)/$*
 
 .a.install .$(SOEXT).install:
-	echo INSTALL $$($(CLEANNAME) $(BASE)$<)
-	cp -f $< $(DESTDIR)$(LIBDIR)/$<
-	chmod 0644 $(DESTDIR)$(LIBDIR)/$<
+	$(INSTALL) -b 0644 $< $(LIBDIR)/$<
 .a.uninstall .$(SOEXT).uninstall:
-	echo UNINSTALL $$($(CLEANNAME) $(BASE)$<)
-	rm -f $(DESTDIR)$(LIBDIR)/$<
+	$(UNINSTALL) $< $(LIBDIR)/$<
 
 .h.install:
-	echo INSTALL $$($(CLEANNAME) $(BASE)$<)
-	cp -f $< $(DESTDIR)$(INCLUDE)/$<
-	chmod 0644 $(DESTDIR)$(INCLUDE)/$<
+	$(INSTALL) 0644 $< $(INCLUDE)/$<
 .h.uninstall:
-	echo UNINSTALL $$($(CLEANNAME) $(BASE)$<)
-	rm -f $(DESTDIR)$(INCLUDE)/$<
+	$(UNINSTALL) $< $(INCLUDE)/$<
 
-.1.install:
-	set -e; \
-	man=1; \
-	path="$(MAN)/man$$man/$*.$$man"; \
-	echo INSTALL man $$($(CLEANNAME) "$(BASE)/$*($$man)"); \
-	cp "$<" $(DESTDIR)"$$path"; \
-	chmod 0644 $(DESTDIR)"$$path"
-.1.uninstall:
-	echo UNINSTALL man $$($(CLEANNAME) $*'(1)')
-	rm -f $(DESTDIR)$(MAN)/man1/$<
+.pdf.install:
+	$(INSTALL) -b 0644 $< $(DOC)/$<
+.pdf.uninstall:
+	$(UNINSTALL) $< $(DOC)/$<
 
-.O.clean:
+INSTALMAN=   _installman()   { man=$${1\#\#*.}; $(INSTALL) 0644 $$1 $(MAN)/man$$man/$$1; }; _installman
+UNINSTALLMAN=_uninstallman() { man=$${1\#\#*.}; $(UNINSTALL) $$1 $(MAN)/man$$man/$$1; }; _uninstallman
+MANSECTIONS=1 2 3 4 5 6 7 8 9
+${MANSECTIONS:%=.%.install}:
+	$(INSTALMAN) $<
+${MANSECTIONS:%=.%.uninstall}:
+	$(UNINSTALL) $<
+
+.out.clean:
 	echo CLEAN $$($(CLEANNAME) $(BASE)$<)
 	rm -f $< || true 2>/dev/null
 	rm -f $*.o || true 2>/dev/null
@@ -106,9 +120,8 @@ all:
 	rm -f $< || true 2>/dev/null
 
 printinstall:
-mkdirs:
 clean:
-install: printinstall mkdirs
+install: printinstall
 depend: cleandep
 
 include $(ROOT)/mk/common.mk

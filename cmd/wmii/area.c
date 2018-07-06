@@ -58,6 +58,8 @@ afmt(Fmt *f) {
 		return fmtstrcpy(f, "<nil>");
 	if(a->floating)
 		return fmtstrcpy(f, "~");
+	if(a->screen > 0 || (f->flags & FmtSharp))
+		return fmtprint(f, "%d:%d", a->screen, area_idx(a));
 	return fmtprint(f, "%d", area_idx(a));
 }
 
@@ -74,16 +76,16 @@ area_name(Area *a) {
 Area*
 area_create(View *v, Area *pos, int scrn, uint width) {
 	static ushort id = 1;
-	uint i;
-	uint minwidth;
+	int i, j;
+	uint minwidth, index;
 	int numcols;
 	Area *a;
 
 	assert(!pos || pos->screen == scrn);
-	SET(i);
+	SET(index);
 	if(v->areas) { /* Creating a column. */
-		minwidth = Dx(v->r[scrn])/NCOL;
-		i = pos ? area_idx(pos) : 1;
+		minwidth = column_minwidth();
+		index = pos ? area_idx(pos) : 1;
 		numcols = 0;
 		for(a=v->areas[scrn]; a; a=a->next)
 			numcols++;
@@ -92,7 +94,7 @@ area_create(View *v, Area *pos, int scrn, uint width) {
 		 */
 		if(width == 0) {
 			if(numcols >= 0) {
-				width = view_newcolwidth(v, i);
+				width = view_newcolwidth(v, index);
 				if (width == 0)
 					width = Dx(v->r[scrn]) / (numcols + 1);
 			}
@@ -102,8 +104,16 @@ area_create(View *v, Area *pos, int scrn, uint width) {
 
 		if(width < minwidth)
 			width = minwidth;
-		if(numcols && (numcols * minwidth + width) > Dx(v->r[scrn]))
+		minwidth = numcols * minwidth + minwidth;
+		if(minwidth > Dx(v->r[scrn]))
 			return nil;
+
+		i = minwidth - Dx(v->pad[scrn]) - Dx(v->r[scrn]);
+		if(i > 0 && Dx(v->pad[scrn])) {
+			j = min(i/2, v->pad[scrn].min.x);
+			v->pad[scrn].min.x -= j;
+			v->pad[scrn].max.x += i - j;
+		}
 
 		view_scale(v, scrn, Dx(v->r[scrn]) - width);
 	}
@@ -145,7 +155,7 @@ area_create(View *v, Area *pos, int scrn, uint width) {
 		area_focus(a);
 
 	if(!a->floating)
-		event("CreateColumn %ud\n", i);
+		event("CreateColumn %ud\n", index);
 	return a;
 }
 
@@ -283,9 +293,10 @@ area_focus(Area *a) {
 		return;
 
 	v->sel = a;
-	/* XXX: Multihead. */
-	if(!a->floating)
+	if(!a->floating) {
 		v->selcol = area_idx(a);
+		v->selscreen = a->screen;
+	}
 	if(a != old_a)
 		v->oldsel = nil;
 

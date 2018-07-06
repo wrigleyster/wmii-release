@@ -37,6 +37,7 @@ group_init(Client *c) {
 		if(n == 0)
 			return;
 		w = *ret;
+		free(ret);
 	}
 
 	for(g=group; g; g=g->next)
@@ -613,7 +614,7 @@ fullscreen(Client *c, int fullscreen, long screen) {
 			}
 			else if(f->oldarea > 0) {
 				wassel = (f == f->area->sel);
-				area_moveto(view_findarea(f->view, f->oldarea, true),
+				area_moveto(view_findarea(f->view, f->oldscreen, f->oldarea, true),
 					    f);
 				if(wassel)
 					frame_focus(f);

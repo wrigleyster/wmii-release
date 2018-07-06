@@ -27,6 +27,7 @@ struct Framewin {
 	Point	pt;
 	int	orientation;
 	int	xy;
+	int	screen;
 };
 
 static Rectangle
@@ -48,8 +49,8 @@ framerect(Framewin *f) {
 	/* Keep onscreen */
 	p = ZP;
 	p.x -= min(0, r.min.x);
-	p.x -= max(0, r.max.x - screen->r.max.x);
-	p.y -= max(0, r.max.y - screen->brect.min.y - Dy(r)/2);
+	p.x -= max(0, r.max.x - screens[f->screen]->r.max.x);
+	p.y -= max(0, r.max.y - screens[f->screen]->brect.min.y - Dy(r)/2);
 	return rectaddpt(r, p);
 }
 
@@ -75,6 +76,7 @@ framewin(Frame *f, Point pt, int orientation, int n) {
 	sethandler(fw->w, &handlers);
 
 	fw->f = f;
+	fw->screen = f->area->screen;
 	fw->grabbox = f->grabbox;
 	frameadjust(fw, pt, orientation, n);
 	reshapewin(fw->w, framerect(fw));
@@ -124,7 +126,6 @@ find_area(Point pt) {
 	int s;
 
 	v = selview;
-	/* XXX: Multihead. Check this over. */
 	for(s=0; s < nscreens; s++) {
 		if(!rect_haspoint_p(pt, screens[s]->r))
 			continue;
@@ -132,7 +133,7 @@ find_area(Point pt) {
 			if(pt.x < a->r.max.x)
 				return a;
 	}
-	return nil; /* XXX: Multihead. */
+	return nil;
 }
 
 static void
@@ -149,9 +150,10 @@ vplace(Framewin *fw, Point pt) {
 
 	a = find_area(pt);
 	if(a == nil)
-		return; /* XXX: Multihead. */
+		return;
 
 	fw->ra = a;
+	fw->screen = a->screen;
 
 	pt.x = a->r.min.x;
 	frameadjust(fw, pt, OHoriz, Dx(a->r));
@@ -202,8 +204,9 @@ hplace(Framewin *fw, Point pt) {
 	if(a == nil)
 		return; /* XXX: Multihead. */
 
+	fw->screen = a->screen;
 	fw->ra = nil;
-	minw = Dx(v->r[a->screen])/NCOL;
+	minw = column_minwidth();
 	if(abs(pt.x - a->r.min.x) < minw/2) {
 		pt.x = a->r.min.x;
 		fw->ra = a->prev;
@@ -251,12 +254,13 @@ static int (*tramp[])(Frame*) = {
  * like the idea.
  */
 static void
-trampoline(int fn, Frame *f) {
+trampoline(int fn, Frame *f, bool grabbox) {
 
 	while(fn > 0) {
 		resizing = fn != TFloat;
 		view_update(f->view);
-		warppointer(grabboxcenter(f));
+		if(grabbox)
+			warppointer(grabboxcenter(f));
 		//f->collapsed = false;
 		fn = tramp[fn](f);
 	}
@@ -282,9 +286,9 @@ mouse_movegrabbox(Client *c, bool grabmod) {
 	}
 
 	if(f->area->floating)
-		trampoline(TFloat, f);
+		trampoline(TFloat, f, !grabmod);
 	else
-		trampoline(THCol, f);
+		trampoline(THCol, f, true);
 
 	if(grabmod)
 		warppointer(addpt(f->r.min, Pt(x * Dx(f->r),
@@ -452,8 +456,7 @@ thcol(Frame *f) {
 			}
 
 
-			/* XXX: Multihead. */
- 			if(!a->frame && !a->floating && f->view->firstarea->next)
+ 			if(!a->frame && !a->floating && a->view->areas[a->screen]->next)
  				area_destroy(a);
 
 			frame_focus(f);
@@ -560,7 +563,8 @@ tfloat(Frame *f) {
 	frect = f->r;
 
 	pt = querypointer(&scr.root);
-	pt1 = grabboxcenter(f);
+	/* pt1 = grabboxcenter(f); */
+	pt1 = pt;
 	goto case_motion;
 
 shut_up_ken:

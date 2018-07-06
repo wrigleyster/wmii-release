@@ -3,7 +3,7 @@ import subprocess
 
 import pygmi
 
-__all__ = 'call', 'program_list', 'curry', 'find_script', '_'
+__all__ = 'call', 'message', 'program_list', 'curry', 'find_script', '_', 'prop'
 
 def _():
     pass
@@ -13,9 +13,16 @@ def call(*args, **kwargs):
     input = kwargs.pop('input', None)
     p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, cwd=os.environ['HOME'],
-                         **kwargs)
+                         close_fds=True, **kwargs)
     if not background:
         return p.communicate(input)[0].rstrip('\n')
+
+def message(message):
+    args = ['xmessage', '-file', '-'];
+    font = pygmi.wmii['font']
+    if not font.startswith('xft:'):
+        args += ['-fn', font.split(',')[0]]
+    call(*args, input=message)
 
 def program_list(path):
     names = []
@@ -48,5 +55,11 @@ def find_script(name):
     for path in pygmi.confpath:
         if os.access('%s/%s' % (path, name), os.X_OK):
             return '%s/%s' % (path, name)
+
+def prop(**kwargs):
+    def prop_(wrapped):
+        kwargs['fget'] = wrapped
+        return property(**kwargs)
+    return prop_
 
 # vim:se sts=4 sw=4 et:

@@ -1,12 +1,12 @@
-.TH "WMII" 1 "Dec, 2008" ""
+.TH "WMII" 1 "Oct, 2009" "wmii-@VERSION@"
 
 .SH NAME
 .P
-wmii \- Window Manager Improved Improved
+wmii \- Window Manager Improved²
 
 .SH SYNOPSIS
 .P
-wmii \fI[\-a \fI<address>\fR]\fR \fI[\-c \fI<wmiirc>\fR]\fR 
+wmii \fI[\-a \fI<address>\fR]\fR \fI[\-r \fI<wmiirc>\fR]\fR 
 .P
 wmii \-v
 
@@ -45,7 +45,33 @@ of the core window manager.
 the bar, which are described in detail in the
 \fBTerminology\fR section.
 
-.SS Terminology
+.SS Command Line Arguments
+.TP
+\-a \fI<address>\fR
+Specifies the address on which \fBwmii\fR should listen for
+connections. The address takes the form
+\fB\fI<protocol>\fR!\fI<address>\fR\fR. The default is of the form:
+
+unix!/tmp/ns.\fB$USER\fR.\fB${DISPLAY\fR%.0\fB}\fR/wmii
+
+which opens a unix socket per Plan 9 Port conventions. To
+open a TCP socket, listening at port 4332 on the loopback
+interface, use:
+
+tcp!localhost!4332
+
+\fB$WMII_NAMESPACE\fR is automatically set to this value.
+
+.TP
+\-r \fI<wmiirc>\fR
+Specifies which rc script to run. If \fI<wmiirc>\fR consists of a
+single argument, \fB$WMII_CONFPATH\fR is searched before \fB$PATH\fR.
+Otherwise, it is passed to the shell for evaluation. The
+environment variables \fB$WMII_ADDRESS\fR and \fB$WMII_CONFPATH\fR are
+preset for the script.
+
+== Terminology ==
+
 .TP
 Display
 A running X server instance consisting of input
@@ -131,7 +157,7 @@ An action is a shell script in the default setup, but it can
 actually be any executable file.  It is executed usually by
 selecting it from the actions menu.  You can customize an action
 by copying it from the global action directory
-\&'/home/kris/wmiiinst/etc/wmii\-3.5' to '$HOME/.wmii\-3.5' and then
+\&'@CONFPREFIX@/wmii\-3.5' to '\fB$HOME\fR/.wmii\-3.5' and then
 editing the copy to fit your needs.  Of course you can also
 create your own actions there; make sure that they are
 executable.
@@ -148,6 +174,11 @@ tab(^); ll.
 .TE
 
 .SS Default Key Bindings
+.P
+All of the provided \fBwmiirc\fR scripts accept at least the following key
+bindings. They should also provide a \fBshowkeys\fR action to open a
+key binding quick\-reference.
+
 .SS Moving Around
 .TS
 tab(^); ll.
@@ -171,7 +202,7 @@ tab(^); ll.
  Mod\-Shift\-k^Move the current window above the window above it.
  Mod\-Shift\-space^Toggle the current window between the managed and floating layer
  Mod\-Shift\-t \fI<tag>\fR^Move the current window to the view of the given \fI<tag>\fR
- Mod\-Shift\-\fI\fI[0\-9]\fR\fR^Move to the current window to the view with the given number
+ Mod\-Shift\-\fI\fI[0\-9]\fR\fR^Move the current window to the view with the given number
 .TE
 
 .SS Miscellaneous
@@ -184,7 +215,7 @@ tab(^); ll.
  Mod\-Shift\-c^\fBKill\fR the selected client
  Mod\-p \fI<program>\fR^\fBExecute\fR \fI<program>\fR
  Mod\-a \fI<action>\fR^\fBExecute\fR the named <action
- Mod\-Enter^\fBExecute\fR an \fBxterm\fR
+ Mod\-Enter^\fBExecute\fR an \fB@TERMINAL@\fR
 .TE
 
 .SH Configuration
@@ -315,6 +346,10 @@ Quit \fBwmii\fR
 .TP
 exec \fI<prog>\fR
 Replace \fBwmii\fR with \fI<prog>\fR
+.TP
+spawn \fI<prog>\fR
+Spawn a new program, as if by the \fI\-r\fR flag.
+.RS -8
 
 
 .SS The /client/ Hierarchy
@@ -422,12 +457,28 @@ area
 Selects a column or the floating area.
 
 .nf
-     area ::= "~" | \fI<number>\fR | "sel"
+     area        ::= \fI<area_spec>\fR | \fI<screen_spec>\fR:\fI<area_spec>\fR
 .fi
 
 
-Where represents the floating area and \fI<number>\fR represents a column
+When \fI<screen_spec>\fR is omitted and \fI<area_spec>\fR is not "sel",
+0 is assumed. "sel" by itself represents the selected client no
+matter which screen it is on.
+
+.nf
+     area_spec   ::= "~" | \fI<number>\fR | "sel"
+.fi
+
+
+Where "~" represents the floating area and \fI<number>\fR represents a column
 index, starting at one.
+
+.nf
+     screen_spec ::= \fI<number>\fR
+.fi
+
+
+Where \fI<number>\fR representes the 0\-based Xinerama screen number.
 
 .TP
 frame
@@ -479,19 +530,19 @@ them.
 
 .SH FILES
 .TP
-/tmp/ns.$USER.${DISPLAY%.0}/wmii
+/tmp/ns.\fB$USER\fR.\fB${DISPLAY\fR%.0\fB}\fR/wmii
 The wmii socket file which provides a 9P service.
 .TP
-/home/kris/wmiiinst/etc/wmii\-3.5
+@CONFPREFIX@/wmii@CONFVERSION@
 Global action directory.
 .TP
-$HOME/.wmii\-3.5
+\fB$HOME\fR/.wmii@CONFVERSION@
 User\-specific action directory. Actions are first searched here.
 
 
 .SH ENVIRONMENT
 .TP
-HOME, DISPLAY
+\fB$HOME\fR, \fB$DISPLAY\fR
 See the section \fBFILES\fR above.
 
 .P
@@ -499,12 +550,18 @@ The following variables are set and exported within \fBwmii\fR and
 thus can be used in actions:
 
 .TP
-WMII_ADDRESS
-Socket file of Used by wmiir(1).
+\fB$WMII_ADDRESS\fR
+The address on which \fBwmii\fR is listening.
+.TP
+\fB$NAMESPACE\fR
+The namespace directory to use if no address is provided.
 
 .SH SEE ALSO
 .P
 dmenu(1), wmiir(1)
+
+.P
+@DOCDIR@/wmii.pdf
 
 .P
 \fI[1]\fR http://www.suckless.org/wiki/wmii/tips/9p_tips

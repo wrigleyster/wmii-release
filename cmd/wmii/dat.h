@@ -1,4 +1,4 @@
-/* Copyright ©2007-2008 Kris Maglione <jg@suckless.org>
+/* Copyright ©2007-2009 Kris Maglione <jg@suckless.org>
  * See LICENSE file for license details.
  */
 
@@ -196,7 +196,6 @@ struct Divide {
 	Area*	left;
 	Area*	right;
 	bool	mapped;
-	int	side;
 	int	x;
 };
 
@@ -210,7 +209,9 @@ struct Frame {
 	Client*	client;
 	View*	view;
 	Area*	area;
+	int	oldscreen;
 	int	oldarea;
+	int	screen;
 	int	column;
 	ushort	id;
 	bool	collapsed;
@@ -278,8 +279,10 @@ struct View {
 	Area*	oldsel;
 	Area*	revert;
 	int	selcol;
+	int	selscreen;
 	bool	dead;
 	Rectangle *r;
+	Rectangle *pad;
 };
 
 /* Yuck. */

@@ -50,6 +50,7 @@ enum {
 	LSELECT,
 	LSEND,
 	LSLAY,
+	LSPAWN,
 	LSWAP,
 	LTOGGLE,
 	LUP,
@@ -83,6 +84,7 @@ char *symtab[] = {
 	"select",
 	"send",
 	"slay",
+	"spawn",
 	"swap",
 	"toggle",
 	"up",
@@ -327,8 +329,9 @@ strclient(View *v, char *s) {
 }
 
 Area*
-strarea(View *v, int scrn, const char *s) {
+strarea(View *v, ulong scrn, const char *s) {
 	Area *a;
+	char *p;
 	long i;
 
 	/*
@@ -339,14 +342,28 @@ strarea(View *v, int scrn, const char *s) {
 
 	if(s == nil)
 		return nil;
-	if(!strcmp(s, "sel"))
+
+	if((p = strchr(s, ':'))) {
+		*p++ = '\0';
+		if(!strcmp(s, "sel"))
+			scrn = v->selscreen;
+		else if(!getulong(s, &scrn))
+			return nil;
+		s = p;
+	}
+	else if(!strcmp(s, "sel"))
 		return v->sel;
+
+	if(!strcmp(s, "sel")) {
+		if(scrn != v->selscreen)
+			return nil;
+		return v->sel;
+	}
 	if(!strcmp(s, "~"))
 		return v->floating;
 	if(!getlong(s, &i) || i == 0)
 		return nil;
 
-	/* FIXME: Very broken! */
 	if(i > 0) {
 		for(a = v->areas[scrn]; a; a = a->next)
 			if(i-- == 1) break;
@@ -502,6 +519,9 @@ message_root(void *p, IxpMsg *m) {
 		execstr = strdup(m->pos);
 		srv.running = 0;
 		break;
+	case LSPAWN:
+		spawn_command(m->pos);
+		break;
 	case LFOCUSCOLORS:
 		ret = msg_parsecolors(m, &def.focuscolor);
 		view_update(selview);
@@ -638,7 +658,6 @@ message_view(View *v, IxpMsg *m) {
 	switch(getsym(s)) {
 	case LCOLMODE:
 		s = msg_getword(m);
-		/* XXX: Multihead */
 		a = strarea(v, screen->idx, s);
 		if(a == nil) /* || a->floating) */
 			return Ebadvalue;
@@ -671,7 +690,7 @@ message_view(View *v, IxpMsg *m) {
 char*
 readctl_view(View *v) {
 	Area *a;
-	uint i;
+	int s;
 
 	bufclear();
 	bufprint("%s\n", v->name);
@@ -686,8 +705,8 @@ readctl_view(View *v) {
 	if(v->sel->sel)
 		bufprint("select client %C\n", v->sel->sel->client);
 
-	for(a = v->firstarea, i = 1; a; a = a->next, i++)
-		bufprint("colmode %d %s\n", i, column_getmode(a));
+	foreach_area(v, s, a)
+		bufprint("colmode %a %s\n", a, column_getmode(a));
 	return buffer;
 }
 
@@ -941,7 +960,7 @@ msg_selectframe(Area *a, IxpMsg *m, int sym) {
 		c = win2client(i);
 		if(c == nil)
 			return "unknown client";
-		f = client_viewframe(c, f->view);
+		f = client_viewframe(c, a->view);
 		if(!f)
 			return Ebadvalue;
 	}
@@ -971,13 +990,33 @@ msg_selectframe(Area *a, IxpMsg *m, int sym) {
 	return nil;
 }
 
+static char*
+sendarea(Frame *f, Area *to, bool swap) {
+	Client *c;
+
+	c = f->client;
+	if(!to)
+		return Ebadvalue;
+
+	if(!swap)
+		area_moveto(to, f);
+	else if(to->sel)
+		frame_swap(f, to->sel);
+	else
+		return Ebadvalue;
+
+	frame_focus(client_viewframe(c, f->view));
+	/* view_arrange(v); */
+	view_update_all();
+	return nil;
+}
+
 char*
 msg_sendclient(View *v, IxpMsg *m, bool swap) {
 	Area *to, *a;
 	Frame *f, *ff;
 	Client *c;
 	char *s;
-	ulong i;
 	int sym;
 
 	s = msg_getword(m);
@@ -1015,9 +1054,9 @@ msg_sendclient(View *v, IxpMsg *m, bool swap) {
 		if(!a->floating)
 			to = v->floating;
 		else if(f->column)
-			to = view_findarea(v, f->column, true);
+			to = view_findarea(v, f->screen, f->column, true);
 		else
-			to = view_findarea(v, v->selcol, true);
+			to = view_findarea(v, v->selscreen, v->selcol, true);
 		break;
 	case LTILDE:
 		if(a->floating)
@@ -1025,11 +1064,11 @@ msg_sendclient(View *v, IxpMsg *m, bool swap) {
 		to = v->floating;
 		break;
 	default:
-		if(!getulong(s, &i) || i == 0)
-			return Ebadvalue;
-		to = view_findarea(v, i, true);
+		to = strarea(v, v->selscreen, s);
+		// to = view_findarea(v, scrn, i, true);
 		break;
 	}
+
 
 	if(!to && !swap) {
 		/* XXX: Multihead - clean this up, move elsewhere. */
@@ -1045,32 +1084,27 @@ msg_sendclient(View *v, IxpMsg *m, bool swap) {
 		}
 	}
 
-	if(!to)
-		return Ebadvalue;
-
-	if(!swap)
-		area_moveto(to, f);
-	else if(to->sel)
-		frame_swap(f, to->sel);
-	else
-		return Ebadvalue;
-
-	frame_focus(client_viewframe(c, v));
-	/* view_arrange(v); */
-	view_update_all();
-	return nil;
+	return sendarea(f, to, swap);
 }
 
 static char*
 msg_sendframe(Frame *f, int sym, bool swap) {
 	Client *c;
+	Area *a;
 	Frame *fp;
 
 	SET(fp);
 	c = f->client;
+
+	a = f->area;
+	fp = f;
+	if(!find(&a, &fp, DIR(sym), false, false))
+		return Ebadvalue;
+	if(a != f->area)
+		return sendarea(f, a, swap);
+
 	switch(sym) {
 	case LUP:
-		/* XXX: Multihead. */
 		fp = f->aprev;
 		if(!fp)
 			return Ebadvalue;
@@ -1078,7 +1112,6 @@ msg_sendframe(Frame *f, int sym, bool swap) {
 			fp = fp->aprev;
 		break;
 	case LDOWN:
-		/* XXX: Multihead. */
 		fp = f->anext;
 		if(!fp)
 			return Ebadvalue;

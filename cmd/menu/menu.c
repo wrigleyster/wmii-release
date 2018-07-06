@@ -57,7 +57,7 @@ static void
 selectitem(Item *i) {
 	if(i != matchidx) {
 		caret_set(input.filter_start, input.pos - input.string);
-		caret_insert(i->retstring, 0);
+		caret_insert(i->string, 0);
 		matchidx = i;
 	}
 }
@@ -86,7 +86,10 @@ next:
 		if(!matchidx && matchfirst->retstring && !motion)
 		if(input.filter_start == 0 && input.pos == input.end)
 			menu_cmd(CMPL_FIRST, 0);
-		print("%s", input.string);
+		if(!motion && matchidx && !strcmp(input.string, matchidx->string))
+			print("%s", matchidx->retstring);
+		else
+			print("%s", input.string);
 		break;
 	case REJECT:
 		srv.running = false;
@@ -95,6 +98,7 @@ next:
 	case BACKWARD:
 	case FORWARD:
 		caret_move(op, motion);
+		update_input();
 		break;
 	case CMPL_NEXT:
 		selectitem(matchidx ? matchidx->next : matchfirst);
@@ -137,6 +141,7 @@ _menu_draw(bool draw) {
 	pad = (font->height & ~1);
 
 	rd = r;
+	rp = ZR; // SET(rp)
 	if (prompt) {
 		if (!promptw)
 			promptw = textwidth(font, prompt) + 2 * ltwidth;
@@ -298,19 +303,14 @@ kdown_event(Window *w, XKeyEvent *e) {
 			menu_cmd(BACKWARD, amount);
 			break;
 		case LCOMPLETE:
-			amount = CMPL_NEXT;
-			if(have(LNEXT))
-				amount = CMPL_NEXT;
-			else if(have(LPREV))
-				amount = CMPL_PREV;
-			else if(have(LNEXTPAGE))
-				amount = CMPL_NEXT_PAGE;
-			else if(have(LPREVPAGE))
-				amount = CMPL_PREV_PAGE;
-			else if(have(LFIRST))
-				amount = CMPL_FIRST;
-			else if(have(LLAST))
-				amount = CMPL_LAST;
+			amount = (
+				have(LNEXT)     ? CMPL_NEXT  :
+				have(LPREV)     ? CMPL_PREV  :
+				have(LNEXTPAGE) ? CMPL_NEXT_PAGE :
+				have(LPREVPAGE) ? CMPL_PREV_PAGE :
+				have(LFIRST)    ? CMPL_FIRST :
+				have(LLAST)     ? CMPL_LAST  :
+				CMPL_NEXT);
 			menu_cmd(amount, 0);
 			break;
 		case LFORWARD:

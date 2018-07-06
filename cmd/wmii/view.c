@@ -74,15 +74,18 @@ view_create(const char *name) {
 	v = emallocz(sizeof *v);
 	v->id = id++;
 	v->r = emallocz(nscreens * sizeof *v->r);
-	v->areas = emallocz(nscreens * sizeof *v->areas);
+	v->pad = emallocz(nscreens * sizeof *v->pad);
 
 	utflcpy(v->name, name, sizeof v->name);
 
 	event("CreateTag %s\n", v->name);
 	area_create(v, nil, screen->idx, 0);
 
+	v->areas = emallocz(nscreens * sizeof *v->areas);
+
 	for(i=0; i < nscreens; i++)
 		view_init(v, i);
+
 	
 	area_focus(v->firstarea);
 
@@ -104,6 +107,7 @@ view_create(const char *name) {
 
 void
 view_init(View *v, int iscreen) {
+	v->r[iscreen] = screens[iscreen]->r;
 	v->areas[iscreen] = nil;
 	column_new(v, nil, iscreen, 0);
 }
@@ -150,12 +154,14 @@ view_destroy(View *v) {
 }
 
 Area*
-view_findarea(View *v, int idx, bool create) {
+view_findarea(View *v, int screen, int idx, bool create) {
 	Area *a;
 
-	for(a=v->firstarea; a && --idx > 0; a=a->next)
+	assert(screen >= 0 && screen < nscreens);
+
+	for(a=v->areas[screen]; a && --idx > 0; a=a->next)
 		if(create && a->next == nil)
-			return area_create(v, a, screen->idx, 0);
+			return area_create(v, a, screen, 0);
 	return a;
 }
 
@@ -278,6 +284,7 @@ view_update(View *v) {
 			f->collapsed = false;
 			if(!f->area->floating) {
 				f->oldarea = area_idx(f->area);
+				f->oldscreen = f->area->screen;
 				area_moveto(v->floating, f);
 				area_setsel(v->floating, f);
 			}else if(f->oldarea == -1)
@@ -373,10 +380,10 @@ view_attach(View *v, Frame *f) {
 		     || group_leader(c->group)
 		        && !client_viewframe(group_leader(c->group),
 					     c->sel->view);
+	USED(newgroup);
 
 	if(!(c->w.ewmh.type & (TypeSplash|TypeDock))) {
-		if(newgroup
-		&& !(c->tagre.regex && regexec(c->tagre.regc, v->name, nil, 0)))
+		if(!(c->tagre.regex && regexec(c->tagre.regc, v->name, nil, 0)))
 			frame_focus(f);
 		else if(c->group && f->area->sel->client->group == c->group)
 			/* XXX: Stack. */
@@ -469,9 +476,10 @@ view_scale(View *v, int scrn, int width) {
 	uint minwidth;
 	Area *a;
 	float scale;
-	int dx;
+	int dx, minx;
 
-	minwidth = Dx(v->r[scrn])/NCOL; /* XXX: Multihead. */
+	minwidth = column_minwidth();
+	minx = v->r[scrn].min.x + v->pad[scrn].min.x;
 
 	if(!v->areas[scrn])
 		return;
@@ -484,7 +492,7 @@ view_scale(View *v, int scrn, int width) {
 	}
 
 	scale = (float)width / dx;
-	xoff = v->r[scrn].min.x;
+	xoff = minx;
 	for(a=v->areas[scrn]; a; a=a->next) {
 		a->r.max.x = xoff + Dx(a->r) * scale;
 		a->r.min.x = xoff;
@@ -496,14 +504,14 @@ view_scale(View *v, int scrn, int width) {
 	if(numcol * minwidth > width)
 		return;
 
-	xoff = v->r[scrn].min.x;
+	xoff = minx;
 	for(a=v->areas[scrn]; a; a=a->next) {
 		a->r.min.x = xoff;
 
 		if(Dx(a->r) < minwidth)
 			a->r.max.x = xoff + minwidth;
 		if(!a->next)
-			a->r.max.x = v->r[scrn].min.x + width;
+			a->r.max.x = minx + width;
 		xoff = a->r.max.x;
 	}
 }
@@ -519,7 +527,7 @@ view_arrange(View *v) {
 
 	view_update_rect(v);
 	for(s=0; s < nscreens; s++)
-		view_scale(v, s, Dx(v->r[s]));
+		view_scale(v, s, Dx(v->r[s]) + Dx(v->pad[s]));
 	foreach_area(v, s, a) {
 		if(a->floating)
 			continue;
@@ -593,28 +601,26 @@ view_index(View *v) {
 	Rectangle *r;
 	Frame *f;
 	Area *a;
-	int i, s;
+	int s;
 
 	bufclear();
-	i = 0;
 	foreach_area(v, s, a) {
-		i++;
 		if(a->floating)
-			bufprint("# ~ %d %d\n", Dx(a->r), Dy(a->r));
+			bufprint("# %a %d %d\n", a, Dx(a->r), Dy(a->r));
 		else
-			bufprint("# %d %d %d\n", i, a->r.min.x, Dx(a->r));
+			bufprint("# %a %d %d\n", a, a->r.min.x, Dx(a->r));
 
 		for(f=a->frame; f; f=f->anext) {
 			r = &f->r;
 			if(a->floating)
-				bufprint("~ %C %d %d %d %d %s\n",
-						f->client,
+				bufprint("%a %C %d %d %d %d %s\n",
+						a, f->client,
 						r->min.x, r->min.y,
 						Dx(*r), Dy(*r),
 						f->client->props);
 			else
-				bufprint("%d %C %d %d %s\n",
-						i, f->client,
+				bufprint("%a %C %d %d %s\n",
+						a, f->client,
 						r->min.y, Dy(*r),
 						f->client->props);
 		}

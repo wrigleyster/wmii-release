@@ -68,7 +68,7 @@ static void
 randr_screenchange(XRRScreenChangeNotifyEvent *ev) {
 
 	XRRUpdateConfiguration((XEvent*)ev);
-	if(ev->rotation+90 % 180)
+	if(ev->rotation*90 % 180)
 		scr.rect = Rect(0, 0, ev->width, ev->height);
 	else
 		scr.rect = Rect(0, 0, ev->height, ev->width);

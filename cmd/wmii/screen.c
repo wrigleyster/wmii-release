@@ -81,15 +81,13 @@ findscreen(Rectangle rect, int direction) {
 
 static Rectangle
 leastthing(Rectangle rect, int direction, Vector_ptr *vec, Rectangle (*key)(void*)) {
-	void *p;
 	Rectangle r;
-	Point pt;
 	int i, best, d;
 
 	SET(d);
+	SET(best);
 	for(i=0; i < vec->n; i++) {
-		p = vec->ary[i];
-		r = key(p);
+		r = key(vec->ary[i]);
 		switch(direction) {
 		case South: d =  r.min.y; break;
 		case North: d = -r.max.y; break;
@@ -99,20 +97,19 @@ leastthing(Rectangle rect, int direction, Vector_ptr *vec, Rectangle (*key)(void
 		if(i == 0 || d < best)
 			best = d;
 	}
-	pt = rect.min;
 	switch(direction) {
-	case South: pt.y =  best - Dy(rect); break;
-	case North: pt.y = -best + Dy(rect); break;
-	case East:  pt.x =  best - Dy(rect); break;
-	case West:  pt.x = -best + Dy(rect); break;
+	case South: rect.min.y = rect.max.y =  best; break;
+	case North: rect.min.y = rect.max.y = -best; break;
+	case East:  rect.min.x = rect.max.x =  best; break;
+	case West:  rect.min.x = rect.max.x = -best; break;
 	}
-	return rectsetorigin(rect, pt);
+	return rect;
 }
 
 void*
 findthing(Rectangle rect, int direction, Vector_ptr *vec, Rectangle (*key)(void*), bool wrap) {
 	Rectangle isect;
-	Rectangle r, bestisect, bestr;
+	Rectangle r, bestisect = {0,}, bestr = {0,};
 	void *best, *p;
 	int i, n;
 

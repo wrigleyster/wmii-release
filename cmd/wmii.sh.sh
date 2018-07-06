@@ -1,21 +1,33 @@
 
-if [ -z "$scriptname" ]; then
-	scriptname="$wmiiscript"; fi
+[ -z "$scriptname" ] && scriptname="$wmiiscript"
 echo Start $wmiiscript | wmiir write /event 2>/dev/null ||
 	exit 1
 
-wi_nl='
+wi_newline='
 '
 
 _wi_script() {
+	# Awk script to mangle key/event/action definition spec
+	# into switch-case functions and lists of the cases. Also
+	# generates a simple key binding help text based on KeyGroup
+	# clauses and comments that appear on key lines.
+	#
+	# Each clause (Key, Event, Action) generates a function of the
+	# same name which executes the indented text after the matching
+	# clause. Clauses are selected based on the first argument passed
+	# to the mangled function. Additionally, a variable is created named
+	# for the plouralized version of the clause name (Keys, Events,
+	# Actions) which lists each case value. These are used for actions
+	# menus and to write wmii's /keys file.
 	cat <<'!'
 	BEGIN {
 		arg[1] = "Nop"
 		narg = 1;
 		body = "";
+		keyhelp = ""
 	}
 	function quote(s) {
-		gsub(/"'"/, "'\\''", s)
+		gsub(/'/, "'\\''", s)
 		return "'" s "'"
 	}
 	function addevent() {
@@ -32,13 +44,22 @@ _wi_script() {
 			}
 		}
 	}
+	/^(Key)Group[ \t]/ {
+		sub(/^[^ \t]+[ \t]+/, "")
+		keyhelp = keyhelp "\n  " $0 "\n"
+	}
 	/^(Event|Key|Action|Menu)[ \t]/ {
 		addevent()
-		split($0, arg)
-		narg = NF
+		split($0, tmp, /[ \t]+#[ \t]*/)
+		narg = split(tmp[1], arg)
+		if(arg[1] == "Key" && tmp[2])
+			for (i=2; i <= narg; i++)
+				keyhelp = keyhelp sprintf("    %-20s %s\n",
+					        arg[i], tmp[2])
 		body = ""
 	}
 	/^[ \t]/ {
+		sub(/^(        |\t)/, "")
 		body = body"\n"$0
 	}
 
@@ -48,7 +69,7 @@ _wi_script() {
 			split(k, b, SUBSEP)
 			c[b[1]] = c[b[1]] b[2] "\n"
 			if(body != "")
-				d[b[1]] = d[b[1]] quote(b[2]) ")" a[k] ";;\n"
+				d[b[1]] = d[b[1]] quote(b[2]) ")" a[k] "\n;;\n"
 		}
 		for(k in c)
 			printf "%ss=%s\n", k, quote(c[k])
@@ -58,6 +79,7 @@ _wi_script() {
 			printf "case $%s in\n%s\n*) return 1\nesac\n", tolower(k), d[k]
 			printf "}\n"
 		}
+		print "KeysHelp=" quote(keyhelp)
 	}
 !
 }
@@ -72,19 +94,14 @@ Event Key
 	Key "$@"
 !
 	eval "cat <<!
-$(sed "$_sed" | sed '/^[ 	]/s/\([$`]\)/\\\1/g')
+$( (test ! -t 0 && cat; for a; do eval "$a"; done) | sed '/^[ 	]/s/\([$`\\]\)/\\\1/g')
 !
 "
 }
 
 wi_events() {
-	_sed=""
-	if [ "$1" = -s ]; then
-		_sed="s/^$2//"
-		shift 2
-	fi
-	#cho "$(_wi_text | awk "$(_wi_script)")" | cat -n
-	eval "$(_wi_text | awk "$(_wi_script)")"
+	#cho "$(_wi_text "$@" | awk "$(_wi_script)")" | cat -n
+	eval "$(_wi_text "$@" | awk "$(_wi_script)")"
 }
 
 wi_fatal() {
@@ -178,7 +195,7 @@ wi_eventloop() {
 
 	wmiir read /event | while read wi_event
 	do
-		IFS="$wi_nl"
+		IFS="$wi_newline"
 		wi_arg=$(echo "$wi_event" | sed 's/^[^ ]* //')
 		unset IFS
 		set -- $wi_event

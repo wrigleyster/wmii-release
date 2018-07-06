@@ -1,4 +1,14 @@
-#!/usr/bin/env wmii9rc
+#!/bin/sh -f
+p="$PATH"
+which rc >/dev/null || PATH="$PLAN9:$p"
+which rc >/dev/null || PATH="/usr/local/plan9/bin:$p"
+which rc >/dev/null || PATH="/usr/local/9/bin:$p"
+which rc >/dev/null || PATH="/opt/plan9/bin:$p"
+which rc >/dev/null || PATH="/opt/9/bin:$p"
+which rc >/dev/null || PATH="/usr/plan9/bin:$p"
+which rc >/dev/null || PATH="/usr/9/bin:$p"
+test $#* '=' 0 || exec rc $0
+
 cd
 scriptname=$0
 oldpath=$path; path=($PLAN9/bin $path)
@@ -7,7 +17,7 @@ oldpath=$path; path=($PLAN9/bin $path)
 # WMII Configuration
 
 # Keys
-MODKEY=Mod1
+MODKEY=Mod4
 UP=k
 DOWN=j
 LEFT=h
@@ -91,7 +101,7 @@ fn Event-Unresponsive {
 		msg = 'The following client is not responding. What would you like to do?'
 		resp = `{wihack -transient $client \
 				xmessage -nearmouse -buttons Kill,Wait -print \
-				$msg $wi_nl '' `{wmiir read /client/$client/label}}
+				$msg $wi_newline '' `{wmiir read /client/$client/label}}
 		if(~ $resp Kill)
 			wmiir xwrite /client/$client/ctl slay
 	}&}
@@ -152,10 +162,10 @@ fn Action-status {
 }
 
 # Source Variables, &c
-if(~ $0 ('' */)rc.wmii.local)
-	wi_notice This file should not be named rc.wmii.local
+if(~ $0 ('' */)wmiirc_local.rc)
+	wi_notice This file should not be named wmiirc_local.rc
 if not
-	. `{wi_script -f rc.wmii.local}
+	. `{wi_script -f wmiirc_local.rc}
 echo $wmiinormcol | wmiir create $noticebar
 
 # Key Bindings
@@ -258,7 +268,7 @@ Action status &
 Action rehash &
 
 # Tag Bar Setup
-ifs=$wi_nl{
+ifs=$wi_newline {
 	rc -c 'wmiir rm /lbar/^$*' >[2]/dev/null \
 		`{comm -23 <{wmiir ls /lbar} \
 			   <{wi_tags}}

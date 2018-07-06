@@ -1,4 +1,4 @@
-/* Copyright ©2007-2008 Kris Maglione <jg@suckless.org>
+/* Copyright ©2007-2009 Kris Maglione <jg@suckless.org>
  * See LICENSE file for license details.
  */
 
@@ -109,6 +109,7 @@ void	column_attachrect(Area*, Frame*, Rectangle);
 void	column_detach(Frame*);
 void	column_frob(Area*);
 void	column_insert(Area*, Frame*, Frame*);
+int	column_minwidth(void);
 Area*	column_new(View*, Area*, int, uint);
 void	column_remove(Frame*);
 void	column_resize(Area*, int);
@@ -206,6 +207,7 @@ void	update_keys(void);
 
 /* main.c */
 void	init_screens(void);
+void	spawn_command(const char*);
 
 /* map.c */
 void**	hash_get(Map*, const char*, bool create);
@@ -227,7 +229,7 @@ char*	msg_sendclient(View*, IxpMsg*, bool swap);
 char*	readctl_client(Client*);
 char*	readctl_root(void);
 char*	readctl_view(View*);
-Area*	strarea(View*, int, const char*);
+Area*	strarea(View*, ulong, const char*);
 void	warning(const char*, ...);
 /* debug */
 void	debug(int, const char*, ...);
@@ -268,7 +270,7 @@ void	view_attach(View*, Frame*);
 View*	view_create(const char*);
 void	view_destroy(View*);
 void	view_detach(Frame*);
-Area*	view_findarea(View*, int, bool);
+Area*	view_findarea(View*, int, int, bool);
 void	view_focus(WMScreen*, View*);
 bool	view_fullscreen_p(View*, int);
 char*	view_index(View*);
@@ -291,6 +293,7 @@ char**	comm(int, char**, char**);
 int	doublefork(void);
 void	grep(char**, Reprog*, int);
 char*	join(char**, char*);
+char*	pathsearch(const char*, const char*, bool);
 void	refree(Regex*);
 void	reinit(Regex*, char*);
 int	strlcatprint(char*, int, const char*, ...);

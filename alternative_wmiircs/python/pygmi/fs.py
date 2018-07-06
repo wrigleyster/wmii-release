@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pyxp import *
 from pyxp.client import *
 from pygmi import *
+from pygmi.util import prop
 
 __all__ = ('wmii', 'Tags', 'Tag', 'Area', 'Frame', 'Client',
            'Button', 'Colors', 'Color')
@@ -16,14 +17,31 @@ def constrain(min, max, val):
     return val
 
 class Ctl(object):
+    """
+    An abstract class to represent the 'ctl' files of the wmii filesystem.
+    Instances act as live, writable dictionaries of the settings represented
+    in the file.
+
+    Abstract roperty ctl_path: The path to the file represented by this
+            control.
+    Property ctl_hasid: When true, the first line of the represented
+            file is treated as an id, rather than a key-value pair. In this
+            case, the value is available via the 'id' property.
+    Property ctl_types: A dict mapping named dictionary keys to two valued
+            tuples, each containing a decoder and encoder function for the
+            property's plain text value.
+    """
     sentinel = {}
     ctl_types = {}
     ctl_hasid = False
 
     def __init__(self):
-        pass
+        self.cache = {}
 
     def ctl(self, *args):
+        """
+        Arguments are joined by ascii spaces and written to the ctl file.
+        """
         client.awrite(self.ctl_path, ' '.join(args))
 
     def __getitem__(self, key):
@@ -38,11 +56,17 @@ class Ctl(object):
         return key in self.keys()
     def __setitem__(self, key, val):
         assert '\n' not in key
+        self.cache[key] = val
         if key in self.ctl_types:
             val = self.ctl_types[key][1](val)
         self.ctl(key, val)
 
     def get(self, key, default=sentinel):
+        """
+        Gets the instance's dictionary value for 'key'. If the key doesn't
+        exist, 'default' is returned. If 'default' isn't provided and the key
+        doesn't exist, a KeyError is raised.
+        """
         try:
             val = self[key]
         except KeyError, e:
@@ -50,6 +74,9 @@ class Ctl(object):
                 return default
             raise e
     def set(self, key, val):
+        """
+        Sets the dictionary value for 'key' to 'val', as self[key] = val
+        """
         self[key] = val
 
     def keys(self):
@@ -63,22 +90,42 @@ class Ctl(object):
                 for line in self.ctl_lines()]
 
     def ctl_lines(self):
+        """
+        Returns the lines of the ctl file as a tuple, with the first line
+        stripped if #ctl_hasid is set.
+        """
         lines = tuple(client.readlines(self.ctl_path))
         if self.ctl_hasid:
             lines = lines[1:]
         return lines
 
     _id = None
-    @property
+    @prop(doc="If #ctl_hasid is set, returns the id of this ctl file.")
     def id(self):
         if self._id is None and self.ctl_hasid:
             return client.read(self.ctl_path).split('\n', 1)[0]
         return self._id
 
 class Dir(Ctl):
+    """
+    An abstract class representing a directory in the wmii filesystem with a
+    ctl file and sub-objects.
+
+    Abstract property base_path: The path directly under which all objects
+            represented by this class reside. e.g., /client, /tag
+    """
     ctl_hasid = True
 
     def __init__(self, id):
+        """
+        Initializes the directory object.
+
+        Param id: The id of the object in question. If 'sel', the object
+                dynamically represents the selected object, even as it
+                changes. In this case, #id will return the actual ID of the
+                object.
+        """
+        super(Dir, self).__init__()
         if id != 'sel':
             self._id = id
 
@@ -87,13 +134,22 @@ class Dir(Ctl):
                 self.id == other.id)
 
     class ctl_property(object):
+        """
+        A class which maps instance properties to ctl file properties.
+        """
         def __init__(self, key):
             self.key = key
         def __get__(self, dir, cls):
             return dir[self.key]
         def __set__(self, dir, val):
             dir[self.key] = val
+
     class toggle_property(ctl_property):
+        """
+        A class which maps instance properties to ctl file properties. The
+        values True and False map to the strings "on" and "off" in the
+        filesystem.
+        """
         props = {
             'on': True,
             'off': False,
@@ -111,6 +167,10 @@ class Dir(Ctl):
             dir[self.key] = val
 
     class file_property(object):
+        """
+        A class which maps instance properties to files in the directory
+        represented by this object.
+        """
         def __init__(self, name, writable=False):
             self.name = name
             self.writable = writable
@@ -122,16 +182,19 @@ class Dir(Ctl):
             return client.awrite('%s/%s' % (dir.path, self.name),
                                  str(val))
 
-    @property
+    @prop(doc="The path to this directory's ctl file")
     def ctl_path(self):
         return '%s/ctl' % self.path
 
-    @property
+    @prop(doc="The path to this directory")
     def path(self):
         return '%s/%s' % (self.base_path, self._id or 'sel')
 
     @classmethod
     def all(cls):
+        """
+        Returns all of the objects that exist for this type of directory.
+        """
         return (cls(s.name)
                 for s in client.readdir(cls.base_path)
                 if s.name != 'sel')
@@ -141,6 +204,10 @@ class Dir(Ctl):
                            repr(self._id or 'sel'))
 
 class Client(Dir):
+    """
+    A class which represents wmii clients. Maps to the directories directly
+    below /client.
+    """
     base_path = '/client'
 
     fullscreen = Dir.toggle_property('Fullscreen')
@@ -151,8 +218,10 @@ class Client(Dir):
     props = Dir.file_property('props')
 
     def kill(self):
+        """Politely asks a client to quit."""
         self.ctl('kill')
     def slay(self):
+        """Forcibly severs a client's connection to the X server."""
         self.ctl('slay')
 
 class liveprop(object):
@@ -167,9 +236,12 @@ class liveprop(object):
         setattr(area, self.attr, val)
 
 class Area(object):
-    def __init__(self, tag, ord, offset=None, width=None, height=None, frames=None):
+    def __init__(self, tag, ord, screen='sel', offset=None, width=None, height=None, frames=None):
         self.tag = tag
+        if ':' in str(ord):
+            screen, ord = ord.split(':', 2)
         self.ord = str(ord)
+        self.screen = str(screen)
         self.offset = offset
         self.width = width
         self.height = height
@@ -187,6 +259,10 @@ class Area(object):
     height = prop('height')
     frames = prop('frames')
 
+    @property
+    def spec(self):
+        return '%s:%s' % (self.screen, self.ord)
+
     def _get_mode(self):
         for k, v in self.tag.iteritems():
             if k == 'colmode':
@@ -195,7 +271,7 @@ class Area(object):
                     return v[1]
     mode = property(
         _get_mode,
-        lambda self, val: self.tag.set('colmode %s' % self.ord, val))
+        lambda self, val: self.tag.set('colmode %s' % self.spec, val))
 
     def grow(self, dir, amount=None):
         self.tag.grow(self, dir, amount)
@@ -286,7 +362,9 @@ class Tag(Dir):
                     area = Area(tag=self, ord=l[1], width=l[2], height=l[3],
                                 frames=[])
                 else:
-                    area = Area(tag=self, ord=l[1], offset=l[2], width=l[3],
+                    m = re.match(l[1], '(?:(\d+):)?(\d+)')
+                    area = Area(tag=self, screen=m.group(1) or 0,
+                                ord=m.group(2), offset=l[2], width=l[3],
                                 frames=[])
                 areas.append(area)
                 i = 0
@@ -536,8 +614,8 @@ class Tags(object):
         self.ignore = set()
         self.tags = {}
         self.sel = None
-        self.normcol = normcol or wmii['normcolors']
-        self.focuscol = focuscol or wmii['focuscolors']
+        self.normcol = normcol
+        self.focuscol = focuscol
         self.lastselect = datetime.now()
         for t in wmii.tags:
             self.add(t.id)
@@ -552,15 +630,15 @@ class Tags(object):
 
     def add(self, tag):
         self.tags[tag] = Tag(tag)
-        self.tags[tag].button = Button('left', tag, self.normcol, tag)
+        self.tags[tag].button = Button('left', tag, self.normcol or wmii.cache['normcolors'], tag)
     def delete(self, tag):
         self.tags.pop(tag).button.remove()
 
     def focus(self, tag):
         self.sel = self.tags[tag]
-        self.sel.button.colors = self.focuscol
+        self.sel.button.colors = self.focuscol or wmii.cache['focuscolors']
     def unfocus(self, tag):
-        self.tags[tag].button.colors = self.normcol
+        self.tags[tag].button.colors = self.normcol or wmii.cache['normcolors']
 
     def set_urgent(self, tag, urgent=True):
         self.tags[tag].button.label = urgent and '*' + tag or tag
@@ -575,7 +653,17 @@ class Tags(object):
                 return tags[i+1]
         return self.sel
 
-    def select(self, tag):
+    def select(self, tag, take_client=None):
+        def goto(tag):
+            if take_client:
+                sel = Tag('sel').id
+                take_client.tags = '+%s' % tag
+                wmii['view'] = tag
+                if tag != sel:
+                    take_client.tags = '-%s' % sel
+            else:
+                wmii['view'] = tag
+
         if tag is self.PREV:
             if self.sel.id not in self.ignore:
                 self.idx -= 1
@@ -584,7 +672,7 @@ class Tags(object):
         else:
             if isinstance(tag, Tag):
                 tag = tag.id
-            wmii['view'] = tag
+            goto(tag)
 
             if tag not in self.ignore:
                 if self.idx < -1:
@@ -599,6 +687,6 @@ class Tags(object):
             return
 
         self.idx = constrain(-len(self.mru), -1, self.idx)
-        wmii['view'] = self.mru[self.idx]
+        goto(self.mru[self.idx])
 
 # vim:se sts=4 sw=4 et:

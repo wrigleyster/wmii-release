@@ -17,9 +17,9 @@ static IxpClient *client;
 static void
 usage(void) {
 	fprint(1,
-		   "usage: %s [-a <address>] {create | read | ls [-ld] | remove | rm | write} <file>\n"
-		   "       %s [-a <address>] xwrite <file> <data>\n"
-		   "       %s -v\n", argv0, argv0, argv0);
+	       "usage: %s [-a <address>] {create | ls [-dlp] | read | remove | write} <file>\n"
+	       "       %s [-a <address>] xwrite <file> <data>\n"
+	       "       %s -v\n", argv0, argv0, argv0);
 	exit(1);
 }
 
@@ -79,12 +79,11 @@ modestr(uint mode) {
 	return buf;
 }
 
-static char *
-timestr(uint val) {
+static char*
+timestr(time_t val) {
 	static char buf[32];
 
-	ctime_r((time_t*)&val, buf);
-	buf[strlen(buf) - 1] = '\0';
+	strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", localtime(&val));
 	return buf;
 }
 
@@ -260,6 +259,7 @@ xls(int argc, char *argv[]) {
 		usage();
 	}ARGEND;
 
+	count = 0;
 	file = EARGF(usage());
 	do {
 		stat = ixp_stat(client, file);
@@ -373,7 +373,7 @@ struct exectab {
 
 int
 main(int argc, char *argv[]) {
-	char *address;
+	char *address, *cmd;
 	exectab *tab;
 	int ret;
 
@@ -384,7 +384,7 @@ main(int argc, char *argv[]) {
 
 	ARGBEGIN{
 	case 'v':
-		print("%s-" VERSION ", ©2009 Kris Maglione\n", argv0);
+		print("%s-" VERSION ", " COPYRIGHT "\n", argv0);
 		exit(0);
 	case 'a':
 		address = EARGF(usage());

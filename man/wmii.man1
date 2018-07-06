@@ -1,16 +1,16 @@
 WMII
-
-Dec, 2008
+wmii-@VERSION@
+Oct, 2009
 
 %!includeconf: header.t2t
 
 = NAME =
 
-wmii - Window Manager Improved Improved
+wmii - Window Manager Improved²
 
 = SYNOPSIS =
 
-wmii [-a <address>] [-c <wmiirc>] +
+wmii [-a <address>] [-r <wmiirc>] +
 wmii -v
 
 = DESCRIPTION =
@@ -45,6 +45,30 @@ of the core window manager.
 `wmii` basically consists of clients, columns, views, and
 the bar, which are described in detail in the
 **Terminology** section.
+
+== Command Line Arguments ==
+
+: -a <address>
+        Specifies the address on which `wmii` should listen for
+        connections. The address takes the form
+        `<protocol>!<address>`. The default is of the form:
+
+                unix!/tmp/ns.$USER.${DISPLAY%.0}/wmii
+
+        which opens a unix socket per Plan 9 Port conventions. To
+        open a TCP socket, listening at port 4332 on the loopback
+        interface, use:
+
+                tcp!localhost!4332
+
+        $WMII_NAMESPACE is automatically set to this value.
+
+: -r <wmiirc>
+        Specifies which rc script to run. If <wmiirc> consists of a
+        single argument, $WMII_CONFPATH is searched before $PATH.
+        Otherwise, it is passed to the shell for evaluation. The
+        environment variables $WMII_ADDRESS and $WMII_CONFPATH are
+        preset for the script.
 
 == Terminology ==
 
@@ -121,7 +145,7 @@ An action is a shell script in the default setup, but it can
 actually be any executable file.  It is executed usually by
 selecting it from the actions menu.  You can customize an action
 by copying it from the global action directory
-'CONFPREFIX/wmii-3.5' to '$HOME/.wmii-3.5' and then
+'@CONFPREFIX@/wmii-3.5' to '$HOME/.wmii-3.5' and then
 editing the copy to fit your needs.  Of course you can also
 create your own actions there; make sure that they are
 executable.
@@ -134,6 +158,10 @@ Here is a list of the default actions:
 | wmiirc   | configure wmii
 
 == Default Key Bindings ==
+
+All of the provided `wmiirc` scripts accept at least the following key
+bindings. They should also provide a `showkeys` action to open a
+key binding quick-reference.
 
 === Moving Around ===
 
@@ -155,7 +183,7 @@ Here is a list of the default actions:
 |  Mod-Shift-k         | Move the current window above the window above it.
 |  Mod-Shift-space     | Toggle the current window between the managed and floating layer
 |  Mod-Shift-t <tag>   | Move the current window to the view of the given <tag>
-|  Mod-Shift-//[0-9]// | Move to the current window to the view with the given number
+|  Mod-Shift-//[0-9]// | Move the current window to the view with the given number
 
 === Miscellaneous ===
 
@@ -166,7 +194,7 @@ Here is a list of the default actions:
 |  Mod-Shift-c       | `Kill` the selected client
 |  Mod-p <program>   | `Execute` <program>
 |  Mod-a <action>    | `Execute` the named <action
-|  Mod-Enter         | `Execute` an `xterm`
+|  Mod-Enter         | `Execute` an `@TERMINAL@`
 
 = Configuration =
 
@@ -276,7 +304,10 @@ follows.
                 Quit `wmii`
         : exec <prog>
                 Replace `wmii` with <prog>
+        : spawn <prog>
+                Spawn a new program, as if by the _-r_ flag.
         :
+        <<
 :
 
 == The /client/ Hierarchy ==
@@ -359,10 +390,20 @@ all of the clients with the given tag applied. The special
         : area
             Selects a column or the floating area.
 
-```    area ::= "~" | <number> | "sel"
+```    area        ::= <area_spec> | <screen_spec>:<area_spec>
 
-            Where represents the floating area and <number> represents a column
+            When <screen_spec> is omitted and <area_spec> is not "sel",
+            0 is assumed. "sel" by itself represents the selected client no
+            matter which screen it is on.
+
+```    area_spec   ::= "~" | <number> | "sel"
+
+            Where "~" represents the floating area and <number> represents a column
             index, starting at one.
+
+```    screen_spec ::= <number>
+
+            Where <number> representes the 0-based Xinerama screen number.
 
         : frame
             Selects a client window.
@@ -407,25 +448,29 @@ them.
 
 : /tmp/ns.$USER.${DISPLAY%.0}/wmii
         The wmii socket file which provides a 9P service.
-: CONFPREFIX/wmii-3.5
+: @CONFPREFIX@/wmii@CONFVERSION@
         Global action directory.
-: $HOME/.wmii-3.5
+: $HOME/.wmii@CONFVERSION@
         User-specific action directory. Actions are first searched here.
 :
 
 = ENVIRONMENT =
 
-: HOME, DISPLAY
+: $HOME, $DISPLAY
         See the section **FILES** above.
 :
 The following variables are set and exported within `wmii` and
 thus can be used in actions:
 
-: WMII_ADDRESS
-        Socket file of Used by wmiir(1).
+: $WMII_ADDRESS
+        The address on which `wmii` is listening.
+: $NAMESPACE
+        The namespace directory to use if no address is provided.
 :
 = SEE ALSO =
 dmenu(1), wmiir(1)
+
+@DOCDIR@/wmii.pdf
 
 [1] http://www.suckless.org/wiki/wmii/tips/9p_tips
 

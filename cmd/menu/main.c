@@ -14,10 +14,11 @@
 #include "fns.h"
 #define link _link
 
-static const char version[] = "wimenu-"VERSION", ©2009 Kris Maglione\n";
+static const char version[] = "wimenu-"VERSION", "COPYRIGHT"\n";
 static Biobuf*	cmplbuf;
 static Biobuf*	inbuf;
 static bool	alwaysprint;
+static char*	cmdsep;
 
 static void
 usage(void) {
@@ -50,12 +51,12 @@ void dprint(long mask, char *fmt, ...) {
 	va_end(ap);
 }
 
-static void
+static inline void
 splice(Item *i) {
 	i->next->prev = i->prev;
 	i->prev->next = i->next;
 }
-static void
+static inline void
 link(Item *i, Item *j) {
 	i->next = j;
 	j->prev = i;
@@ -78,9 +79,13 @@ populate_list(Biobuf *buf, bool hist) {
 		i = i->next;
 		i->string = p;
 		i->retstring = p;
+		if(cmdsep && (p = strstr(p, cmdsep))) {
+			*p = '\0';
+			i->retstring = p + strlen(cmdsep);
+		}
 		if(!hist) {
-			i->len = strlen(p);
-			i->width = textwidth_l(font, p, i->len);
+			i->len = strlen(i->string);
+			i->width = textwidth_l(font, i->string, i->len);
 			if(i->width > maxwidth)
 				maxwidth = i->width;
 		}
@@ -141,6 +146,15 @@ filter_list(Item *i, char *filter) {
 }
 
 void
+update_input(void) {
+	if(alwaysprint) {
+		write(1, input.string, input.pos - input.string);
+		write(1, "", 1);
+		write(1, input.pos, input.end - input.pos + 1);
+	}
+}
+
+void
 update_filter(bool print) {
 	char *filter;
 
@@ -150,28 +164,12 @@ update_filter(bool print) {
 
 	matchidx = nil;
 	matchfirst = matchstart = filter_list(items, filter);
-	if(alwaysprint && print) {
-		write(1, input.string, input.pos - input.string);
-		write(1, "", 1);
-		write(1, input.pos, input.end - input.pos + 1);
-	}
+	if(print)
+		update_input();
 }
 
-/*
- * There's no way to check accesses to destroyed windows, thus
- * those cases are ignored (especially on UnmapNotifies).
- * Other types of errors call Xlib's default error handler, which
- * calls exit().
- */
 ErrorCode ignored_xerrors[] = {
-	{ 0, BadWindow },
-	{ X_SetInputFocus, BadMatch },
-	{ X_PolyText8, BadDrawable },
-	{ X_PolyFillRectangle, BadDrawable },
-	{ X_PolySegment, BadDrawable },
-	{ X_ConfigureWindow, BadMatch },
-	{ X_GrabKey, BadAccess },
-	{ X_GetAtomName, BadAtom },
+	{ 0, }
 };
 
 static void
@@ -264,6 +262,12 @@ main(int argc, char *argv[]) {
 	case 's':
 		screen = strtol(EARGF(usage()), nil, 10);
 		break;
+	case 'S':
+		cmdsep = EARGF(usage());
+		break;
+	case 'v':
+		print("%s", version);
+		return 0;
 	default:
 		usage();
 	}ARGEND;
