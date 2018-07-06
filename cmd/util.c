@@ -1,6 +1,8 @@
 /* Written by Kris Maglione <fbsdaemon at gmail dot com> */
 /* Public domain */
 #include <errno.h>
+#include <sys/types.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -44,6 +46,51 @@ fatal(const char *fmt, ...) {
 	exit(1);
 }
 
+void*
+freelater(void *p) {
+	static char*	obj[16];
+	static long	nobj;
+	int id;
+
+	id = nobj++ % nelem(obj);
+	free(obj[id]);
+	obj[id] = p;
+	return p;
+}
+
+char*
+vsxprint(const char *fmt, va_list ap) {
+	char *s;
+
+	s = vsmprint(fmt, ap);
+	freelater(s);
+	return s;
+}
+
+char*
+sxprint(const char *fmt, ...) {
+	va_list ap;
+	char *ret;
+
+	va_start(ap, fmt);
+	ret = vsxprint(fmt, ap);
+	va_end(ap);
+	return ret;
+}
+
+void
+_die(char *file, int line, char *msg) {
+	fprint(2, "%s: dieing at %s:%d: %s\n",
+		argv0, file, line, msg);
+	kill(getpid(), SIGABRT);
+	abort(); /* Adds too many frames:
+		  *  _die()
+		  *  abort()
+		  *  raise(SIGABRT)
+		  *  kill(getpid(), SIGABRT)
+		  */
+}
+
 /* Can't malloc */
 static void
 mfatal(char *name, uint size) {
@@ -54,19 +101,19 @@ mfatal(char *name, uint size) {
 	char buf[1024];
 	char sizestr[8];
 	int i;
-	
-	i = sizeof(sizestr);
+
+	i = sizeof sizestr;
 	do {
 		sizestr[--i] = '0' + (size%10);
 		size /= 10;
 	} while(size > 0);
 
-	strlcat(buf, argv0, sizeof(buf));
-	strlcat(buf, couldnot, sizeof(buf));
-	strlcat(buf, name, sizeof(buf));
-	strlcat(buf, paren, sizeof(buf));
-	strlcat(buf, sizestr+i, sizeof(buf));
-	strlcat(buf, bytes, sizeof(buf));
+	strlcat(buf, argv0, sizeof buf);
+	strlcat(buf, couldnot, sizeof buf);
+	strlcat(buf, name, sizeof buf);
+	strlcat(buf, paren, sizeof buf);
+	strlcat(buf, sizestr+i, sizeof buf);
+	strlcat(buf, bytes, sizeof buf);
 	write(2, buf, strlen(buf));
 
 	exit(1);
@@ -135,13 +182,6 @@ min(int a, int b) {
 	return b;
 }
 
-char *
-str_nil(char *s) {
-	if(s)
-		return s;
-	return "<nil>";
-}
-
 int
 utflcpy(char *to, const char *from, int l) {
 	char *p;
@@ -172,3 +212,4 @@ strlcat(char *dst, const char *src, uint size) {
 		*d = '\0';
 	return size - n - 1;
 }
+

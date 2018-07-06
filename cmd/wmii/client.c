@@ -1,12 +1,9 @@
 /* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
- * Copyright ©2006-2007 Kris Maglione <fbsdaemon@gmail.com>
+ * Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
  * See LICENSE file for license details.
  */
 #include "dat.h"
 #include <ctype.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <X11/Xatom.h>
 #include "fns.h"
 
@@ -25,10 +22,78 @@ enum {
 		| ButtonReleaseMask
 };
 
-Client *
-create_client(XWindow w, XWindowAttributes *wa) {
+static Group*	group;
+
+static void
+group_init(Client *c) {
+	Group *g;
+	long *ret;
+	XWindow w;
+	long n;
+
+	w = c->w.hints->group;
+	if(w == 0) {
+		/* Not quite ICCCM compliant, but it seems to work. */
+		n = getprop_long(&c->w, "WM_CLIENT_LEADER", "WINDOW", 0L, &ret, 1L);
+		if(n == 0)
+			return;
+		w = *ret;
+	}
+
+	for(g=group; g; g=g->next)
+		if(g->leader == w)
+			break;
+	if(g == nil) {
+		g = emallocz(sizeof *g);
+		g->leader = w;
+		g->next = group;
+		group = g;
+	}
+	c->group = g;
+	g->ref++;
+}
+
+static void
+group_remove(Client *c) {
+	Group **gp;
+	Group *g;
+
+	g = c->group;
+	if(g == nil)
+		return;
+	if(g->client == c)
+		g->client = nil;
+	g->ref--;
+	if(g->ref == 0) {
+		for(gp=&group; *gp; gp=&gp[0]->next)
+			if(*gp == g)
+				break;
+		assert(*gp == g);
+		gp[0] = gp[0]->next;
+	}
+}
+
+static Client*
+group_leader(Group *g) {
+	Client *c;
+
+	c = win2client(g->leader);
+	if(c)
+		return c;
+	if(g->client)
+		return g->client;
+	/* Could do better. */
+	for(c=client; c; c=c->next)
+		if(c->frame && c->group == g)
+			break;
+	return c;
+}
+
+Client*
+client_create(XWindow w, XWindowAttributes *wa) {
 	Client **t, *c;
 	WinAttr fwa;
+	Point p;
 
 	c = emallocz(sizeof(Client));
 	c->border = wa->border_width;
@@ -39,17 +104,14 @@ create_client(XWindow w, XWindowAttributes *wa) {
 	c->w.type = WWindow;
 	c->w.w = w;
 	c->w.r = c->r;
-    
-	if((Dx(c->r) == Dx(screen->r)) && (Dy(c->r) == Dy(screen->r)))
-		fullscreen(c, True);
 
-	prop_client(c, xatom("WM_PROTOCOLS"));
-	prop_client(c, xatom("WM_TRANSIENT_FOR"));
-	prop_client(c, xatom("WM_NORMAL_HINTS"));
-	prop_client(c, xatom("WM_HINTS"));
-	prop_client(c, xatom("WM_CLASS"));
-	prop_client(c, xatom("WM_NAME"));
-	prop_client(c, xatom("_MOTIF_WM_HINTS"));
+	client_prop(c, xatom("WM_PROTOCOLS"));
+	client_prop(c, xatom("WM_TRANSIENT_FOR"));
+	client_prop(c, xatom("WM_NORMAL_HINTS"));
+	client_prop(c, xatom("WM_HINTS"));
+	client_prop(c, xatom("WM_CLASS"));
+	client_prop(c, xatom("WM_NAME"));
+	client_prop(c, xatom("_MOTIF_WM_HINTS"));
 
 	XSetWindowBorderWidth(display, w, 0);
 	XAddToSaveSet(display, w);
@@ -74,81 +136,101 @@ create_client(XWindow w, XWindowAttributes *wa) {
 	sethandler(c->framewin, &framehandler);
 	sethandler(&c->w, &handlers);
 
+	p.x = def.border;
+	p.y = labelh(def.font);
+	reparentwindow(&c->w, c->framewin, p);
+
+	group_init(c);
+
 	grab_button(c->framewin->w, AnyButton, AnyModifier);
 
-	for(t=&client ;; t=&(*t)->next)
+	for(t=&client ;; t=&t[0]->next)
 		if(!*t) {
 			c->next = *t;
 			*t = c;
 			break;
 		}
 
-	write_event("CreateClient %C\n", c);
-	manage_client(c);
+	ewmh_initclient(c);
+
+	event("CreateClient %C\n", c);
+	client_manage(c);
 	return c;
 }
 
 void
-manage_client(Client *c) {
-	Point p;
+client_manage(Client *c) {
 	Client *trans;
+	Frame *f;
 	char *tags;
 
-	tags = gettextproperty(&c->w, "_WMII_TAGS");
-	if(tags == nil)
-		tags = gettextproperty(&c->w, "_WIN_TAGS");
+	if(Dx(c->r) == Dx(screen->r))
+	if(Dy(c->r) == Dy(screen->r))
+		fullscreen(c, true);
 
-	if((trans = win2client(c->trans)))
-		utflcpy(c->tags, trans->tags, sizeof(c->tags));
-	else if(tags)
-		utflcpy(c->tags, tags, sizeof(c->tags));
+	tags = getprop_string(&c->w, "_WMII_TAGS");
 
+	trans = win2client(c->trans);
+	if(trans == nil && c->group)
+		trans = group_leader(c->group);
+
+	if(tags)
+		utflcpy(c->tags, tags, sizeof c->tags);
+	else if(trans)
+		utflcpy(c->tags, trans->tags, sizeof c->tags);
 	free(tags);
 
-	p.x = def.border;
-	p.y = labelh(def.font);
-
-	reparentwindow(&c->w, c->framewin, p);
-
-	if(c->tags[0])
-		apply_tags(c, c->tags);
-	else
+	/* Maybe not the best idea... */
+	if(!trans || !c->tags[0])
 		apply_rules(c);
+	apply_tags(c, c->tags);
 
 	if(!starting)
-		update_views();
+		view_update_all();
 
-	if(c->sel->view == screen->sel)
-		focus(c, True);
-	flushevents(EnterWindowMask, False);
+	bool newgroup = !c->group
+		     || c->group->ref == 1
+		     || selclient() && (selclient()->group == c->group);
+
+	f = c->sel;
+	if(f->view == screen->sel)
+	if(!(c->w.ewmh.type & TypeSplash))
+	if(newgroup) {
+		if(f->area != f->view->sel)
+			f->view->oldsel = f->view->sel;
+		focus(c, false);
+	}
+	else {
+		frame_restack(c->sel, c->sel->area->sel);
+		view_restack(c->sel->view);
+	}
+
+	flushenterevents();
 }
 
 static int /* Temporary Xlib error handler */
 ignoreerrors(Display *d, XErrorEvent *e) {
-	USED(d);
-	USED(e);
+	USED(d, e);
 	return 0;
 }
 
 void
-destroy_client(Client *c) {
+client_destroy(Client *c) {
 	int (*handler)(Display*, XErrorEvent*);
 	Rectangle r;
-	char *dummy;
+	char *none;
 	Client **tc;
-	Bool hide;
-
-	Dprint("client.c:destroy_client(%p) %s\n", c, c->name);
+	bool hide;
 
 	unmapwin(c->framewin);
 
-	for(tc=&client; *tc; tc=&(*tc)->next)
+	for(tc=&client; *tc; tc=&tc[0]->next)
 		if(*tc == c) {
 			*tc = c->next;
 			break;
 		}
 
-	r = gravclient(c, ZR);
+	r = client_grav(c, ZR);
 
 	hide = False;	
 	if(!c->sel || c->sel->view != screen->sel)
@@ -159,9 +241,8 @@ destroy_client(Client *c) {
 	/* In case the client is already unmapped */
 	handler = XSetErrorHandler(ignoreerrors);
 
-	dummy = nil;
-	update_client_views(c, &dummy);
-	unmap_client(c, IconicState);
+	none = nil;
+	client_setviews(c, &none);
 	sethandler(&c->w, nil);
 
 	if(hide)
@@ -170,26 +251,38 @@ destroy_client(Client *c) {
 		reparentwindow(&c->w, &scr.root, r.min);
 	destroywindow(c->framewin);
 
-	XSync(display, False);
+	sync();
 	XSetErrorHandler(handler);
 	XUngrabServer(display);
 
-	write_event("DestroyClient %C\n", c);
+	ewmh_destroyclient(c);
+	group_remove(c);
+	event("DestroyClient %C\n", c);
 
-	flushevents(EnterWindowMask, False);
+	flushenterevents();
 	free(c->w.hints);
 	free(c);
 }
 
 /* Convenience functions */
-Client *
+Frame*
+client_viewframe(Client *c, View *v) {              
+	Frame *f;
+
+	for(f=c->frame; f; f=f->cnext)
+		if(f->view == v)
+			break;
+	return f;
+} 
+
+Client*
 selclient(void) {
 	if(screen->sel->sel->sel)
 		return screen->sel->sel->sel->client;
 	return nil;
 }
 
-Client *
+Client*
 win2client(XWindow w) {
 	Client *c;
 	for(c=client; c; c=c->next)
@@ -207,7 +300,7 @@ Cfmt(Fmt *f) {
 	return fmtprint(f, "<nil>");
 }
 
-char *
+char*
 clientname(Client *c) {
 	if(c)
 		return c->name;
@@ -215,7 +308,7 @@ clientname(Client *c) {
 }
 
 Rectangle
-gravclient(Client *c, Rectangle rd) {
+client_grav(Client *c, Rectangle rd) {
 	Rectangle r;
 	Point sp;
 	WinHints *h;
@@ -225,23 +318,38 @@ gravclient(Client *c, Rectangle rd) {
 
 	if(eqrect(rd, ZR)) {
 		if(c->sel) {
-			if(c->sel->area->floating)
-				r = c->sel->r;
-			else
-				r = c->sel->revert;
+			r = c->sel->floatr;
 		}else
-			r = client2frame(nil, c->r);
+			r = frame_client2rect(nil, c->r);
 		r = gravitate(r, c->r, h->grav);
 		if(h->gravstatic)
 			r = rectaddpt(r, sp);
-		return frame2client(nil, r);
+		return frame_rect2client(nil, r);
 	}else {
-		r = client2frame(nil, rd);
+		r = frame_client2rect(nil, rd);
 		r = gravitate(rd, r, h->grav);
 		if(h->gravstatic)
 			r = rectsubpt(r, sp);
-		return client2frame(nil, r);
+		return frame_client2rect(nil, r);
 	}
+}
+
+bool
+client_floats_p(Client *c) {
+	return c->trans
+            || c->floating
+	    || c->fixedsize
+	    || c->titleless
+	    || c->borderless
+	    || c->fullscreen
+	    || (c->w.ewmh.type & (TypeDialog|TypeSplash|TypeDock));
+}
+
+Frame*
+client_groupframe(Client *c, View *v) {
+	if(c->group && c->group->client)
+		return client_viewframe(c->group->client, v);
+	return nil;
 }
 
 Rectangle
@@ -255,47 +363,47 @@ frame_hints(Frame *f, Rectangle r, Align sticky) {
 		return r;
 
 	or = r;
-	r = frame2client(f, r);
+	r = frame_rect2client(f, r);
 	r = sizehint(c->w.hints, r);
-	r = client2frame(f, r);
+	r = frame_client2rect(f, r);
 
 	if(!f->area->floating) {
 		/* Not allowed to grow */
 		if(Dx(r) > Dx(or))
-			r.max.x =r.min.x+Dx(or);
+			r.max.x = r.min.x+Dx(or);
 		if(Dy(r) > Dy(or))
 			r.max.y = r.min.y+Dy(or);
 	}
 
 	p = ZP;
-	if((sticky&(EAST|WEST)) == EAST)
+	if((sticky&(East|West)) == East)
 		p.x = Dx(or) - Dx(r);
-	if((sticky&(NORTH|SOUTH)) == SOUTH)
+	if((sticky&(North|South)) == South)
 		p.y = Dy(or) - Dy(r);
 
 	return rectaddpt(r, p);
 }
 
 static void
-set_client_state(Client * c, int state) {
+client_setstate(Client * c, int state) {
 	long data[] = { state, None };
 
 	changeprop_long(&c->w, "WM_STATE", "WM_STATE", data, nelem(data));
 }
 
 void
-map_client(Client *c) {
+client_map(Client *c) {
 	if(!c->w.mapped) {
 		mapwin(&c->w);
-		set_client_state(c, NormalState);
+		client_setstate(c, NormalState);
 	}
 }
 
 void
-unmap_client(Client *c, int state) {
+client_unmap(Client *c, int state) {
 	if(c->w.mapped) {
 		unmapwin(&c->w);
-		set_client_state(c, state);
+		client_setstate(c, state);
 	}
 }
 
@@ -310,55 +418,59 @@ unmap_frame(Client *c) {
 }
 
 void
-focus(Client *c, Bool restack) {
+focus(Client *c, bool user) {
 	View *v;
 	Frame *f;
 
 	f = c->sel;
 	if(!f)
 		return;
+	/*
+	if(!user && c->noinput)
+		return;
+	 */
 
-	v = f->area->view;
+	v = f->view;
 	if(v != screen->sel)
-		focus_view(screen, v);
-	focus_frame(c->sel, restack);
+		view_focus(screen, v);
+	frame_focus(c->sel);
 }
 
 void
-focus_client(Client *c) {
+client_focus(Client *c) {
 	flushevents(FocusChangeMask, True);
 
-	Dprint("focus_client(%p[%C]) => %s\n", c,  c, clientname(c));
+	Dprint(DFocus, "client_focus(%p[%C]) => %s\n", c,  c, clientname(c));
 
-	if (screen->focus == c)
-		return;
+	if(c) {
+		if(c->noinput)
+			return;
+		if(c->group)
+			c->group->client = c;
+	}
 
-	if(c == nil || !c->noinput) {
-		Dprint("\t%s => %s\n", clientname(screen->focus), clientname(c));
-
+	if(screen->focus != c) {
+		Dprint(DFocus, "\t%s => %s\n", clientname(screen->focus), clientname(c));
 		if(c)
-			setfocus(&c->w, RevertToPointerRoot);
+			setfocus(&c->w, RevertToParent);
 		else
-			setfocus(screen->barwin, RevertToPointerRoot);
+			setfocus(screen->barwin, RevertToParent);
+		event("ClientFocus %C\n", c);
 
-		write_event("ClientFocus %C\n", c);
-
-		XSync(display, False);
+		sync();
 		flushevents(FocusChangeMask, True);
-	} else if(c && c->noinput) {
-		setfocus(nil, RevertToPointerRoot);
 	}
 }
 
 void
-resize_client(Client *c, Rectangle *r) {
+client_resize(Client *c, Rectangle r) {
 	Frame *f;
 
 	f = c->sel;
-	resize_frame(f, *r);
+	frame_resize(f, r);
 
 	if(f->area->view != screen->sel) {
-		unmap_client(c, IconicState);
+		client_unmap(c, IconicState);
 		unmap_frame(c);
 		return;
 	}
@@ -367,24 +479,26 @@ resize_client(Client *c, Rectangle *r) {
 
 	if((f->area->mode == Colmax) && (f->area->sel != f)) {
 		unmap_frame(c);
-		unmap_client(c, IconicState);
+		client_unmap(c, IconicState);
 	}else if(f->collapsed) {
 		reshapewin(c->framewin, f->r);
 		map_frame(c);
-		unmap_client(c, IconicState);
+		client_unmap(c, IconicState);
 	}else {
-		map_client(c);
+		client_map(c);
 		reshapewin(c->framewin, f->r);
 		reshapewin(&c->w, f->crect);
 		map_frame(c);
-		configure_client(c);
+		client_configure(c);
+		ewmh_framesize(c);
 	}
-
+	sync(); /* Not ideal. */
+	flushenterevents();
 	flushevents(FocusChangeMask|ExposureMask, True);
 }
 
 void
-set_cursor(Client *c, Cursor cur) {
+client_setcursor(Client *c, Cursor cur) {
 	WinAttr wa;
 
 	if(c->cursor != cur) {
@@ -395,7 +509,7 @@ set_cursor(Client *c, Cursor cur) {
 }
 
 void
-configure_client(Client *c) {
+client_configure(Client *c) {
 	XConfigureEvent e;
 	Rectangle r;
 
@@ -413,30 +527,15 @@ configure_client(Client *c) {
 	e.height = Dy(r);
 	e.border_width = c->border;
 
-	XSendEvent(display, c->w.w,
-		/*propegate*/ False,
-		StructureNotifyMask,
-		(XEvent*)&e);
-}
-
-static void
-send_client_message(Client *c, char *name, char *value) {
-	XEvent e;
-
-	e.type = ClientMessage;
-	e.xclient.window = c->w.w;
-	e.xclient.message_type = xatom(name);
-	e.xclient.format = 32;
-	e.xclient.data.l[0] = xatom(value);
-	e.xclient.data.l[1] = CurrentTime;
-	XSendEvent(display, c->w.w, False, NoEventMask, &e);
-	XSync(display, False);
+	sendevent(&c->w, false, StructureNotifyMask, (XEvent*)&e);
 }
 
 void
-kill_client(Client * c) {
-	if(c->proto & WM_PROTOCOL_DELWIN)
-		send_client_message(c, "WM_PROTOCOLS", "WM_DELETE_WINDOW");
+client_kill(Client *c, bool nice) {
+	if(nice && (c->proto & ProtoDelete)) {
+		sendmessage(&c->w, "WM_PROTOCOLS", xatom("WM_DELETE_WINDOW"), xtime, 0, 0, 0);
+		ewmh_pingclient(c);
+	}
 	else
 		XKillClient(display, c->w.w);
 }
@@ -444,59 +543,61 @@ kill_client(Client * c) {
 void
 fullscreen(Client *c, int fullscreen) {
 	Frame *f;
+	bool wassel;
 	
 	if(fullscreen == Toggle)
 		fullscreen = c->fullscreen ^ On;
 	if(fullscreen == c->fullscreen)
 		return;
 
-	write_event("Fullscreen %C %s\n", c, (fullscreen ? "on" : "off"));
+	event("Fullscreen %C %s\n", c, (fullscreen ? "on" : "off"));
 	c->fullscreen = fullscreen;
+	ewmh_updatestate(c);
 
-	if((f = c->sel)) {
-		if(fullscreen) {
-			/* we lose information here if the client was just moved to
-			 * the floating area, but it's worth it */
-			c->revert = f->area;
+	if(!fullscreen)
+		for(f=c->frame; f; f=f->cnext) {
+			if(f->oldarea == 0) {
+				frame_resize(f, f->floatr);
+				if(f->view == screen->sel) /* FIXME */
+					client_resize(f->client, f->r);
 
-			if(f->area->floating)
-				f->revert = f->r;
-			else {
-				f->r = f->revert;
-				send_to_area(f->view->area, f);
 			}
-			focus_client(c);
-		}else {
-			resize_frame(f, f->revert);
-			if (c->revert) {
-				send_to_area(c->revert, f);
-				c->revert = nil;
+			else if(f->oldarea > 0) {
+				wassel = (f == f->area->sel);
+				area_moveto(view_findarea(f->view, f->oldarea, true), f);
+				if(wassel)
+					frame_focus(f);
 			}
 		}
-		if(f->view == screen->sel)
-			focus_view(screen, f->view);
+	else {
+		for(f=c->frame; f; f=f->cnext)
+			f->oldarea = -1;
+		if((f = c->sel))
+			if(f->view == screen->sel)
+				view_focus(screen, f->view);
 	}
 }
 
 void
-set_urgent(Client *c, int urgent, Bool write) {
+client_seturgent(Client *c, bool urgent, int from) {
 	XWMHints *wmh;
-	char *cwrite, *cnot;
+	char *cfrom, *cnot;
 	Frame *f, *ff;
 	Area *a;
 
 	if(urgent == Toggle)
 		urgent = c->urgent ^ On;
 
-	cwrite = (write ? "Manager" : "Client");
+	cfrom = (from == UrgManager ? "Manager" : "Client");
 	cnot = (urgent ? "" : "Not");
 
 	if(urgent != c->urgent) {
-		write_event("%sUrgent %C %s\n", cnot, c, cwrite);
+		event("%sUrgent %C %s\n", cnot, c, cfrom);
 		c->urgent = urgent;
+		ewmh_updatestate(c);
 		if(c->sel) {
 			if(c->sel->view == screen->sel)
-				draw_frame(c->sel);
+				frame_draw(c->sel);
 			for(f=c->frame; f; f=f->cnext) {
 				SET(ff);
 				if(!urgent)
@@ -504,12 +605,12 @@ set_urgent(Client *c, int urgent, Bool write) {
 						for(ff=a->frame; ff; ff=ff->anext)
 							if(ff->client->urgent) break;
 				if(urgent || ff == nil)
-					write_event("%sUrgentTag %s %s\n", cnot, cwrite, f->view->name);
+					event("%sUrgentTag %s %s\n", cnot, cfrom, f->view->name);
 			}
 		}
 	}
 
-	if(write) {
+	if(from == UrgManager) {
 		wmh = XGetWMHints(display, c->w.w);
 		if(wmh == nil)
 			wmh = emallocz(sizeof *wmh);
@@ -538,21 +639,21 @@ update_class(Client *c) {
 }
 
 static void
-update_client_name(Client *c) {
+client_updatename(Client *c) {
 	char *str;
 
 	c->name[0] = '\0';
 
-	str = gettextproperty(&c->w, "_NET_WM_NAME");
+	str = getprop_string(&c->w, "_NET_WM_NAME");
 	if(str == nil)
-		str = gettextproperty(&c->w, "WM_NAME");
+		str = getprop_string(&c->w, "WM_NAME");
 	if(str)
 		utflcpy(c->name, str, sizeof(c->name));
 	free(str);
 
 	update_class(c);
 	if(c->sel)
-		draw_frame(c->sel);
+		frame_draw(c->sel);
 }
 
 static void
@@ -560,56 +661,57 @@ updatemwm(Client *c) {
 	enum {
 		All =		0x1,
 		Border =	0x2,
-		Title =	0x8,
-		FlagDecor = 0x2,
-		Flags =	0,
-		Decor =	2,
+		Title =		0x8,
+		FlagDecor =	0x2,
+		Flags =		0,
+		Decor =		2,
 	};
 	Rectangle r;
 	ulong *ret;
-	Atom real;
 	int n;
 
-	n = getproperty(&c->w, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS", &real, 
-			0L, (void*)&ret, 3L);
+	n = getprop_long(&c->w, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS",
+			0L, (long**)&ret, 3L);
 
 	if(c->sel)
-		r = frame2client(c->sel, c->sel->r);
+		r = frame_rect2client(c->sel, c->sel->r);
 
+	c->borderless = 0;
+	c->titleless = 0;
 	if(n >= 3 && (ret[Flags]&FlagDecor)) {
 		if(ret[Decor]&All)
 			ret[Decor] ^= ~0;
-		c->borderless = ((ret[Decor]&Border)==0);
-		c->titleless = ((ret[Decor]&Title)==0);
-	}else {
-		c->borderless = 0;
-		c->titleless = 0;
+		c->borderless = !(ret[Decor]&Border);
+		c->titleless = !(ret[Decor]&Title);
 	}
 	free(ret);
 
 	if(c->sel) {
-		r = client2frame(c->sel, r);
-		resize_client(c, &r);
-		draw_frame(c->sel);
+		r = frame_client2rect(c->sel, r);
+		client_resize(c, r);
+		frame_draw(c->sel);
 	}
 }
 
 void
-prop_client(Client *c, Atom a) {
+client_prop(Client *c, Atom a) {
 	XWMHints *wmh;
 	char **class;
 	int n;
 
-	if(a == xatom("WM_PROTOCOLS")) {
-		c->proto = winprotocols(&c->w);
-	}
-	else if(a == xatom("_NET_WM_NAME")) {
+	if(a == xatom("WM_PROTOCOLS"))
+		c->proto = ewmh_protocols(&c->w);
+	else
+	if(a == xatom("_NET_WM_NAME"))
 		goto wmname;
-	}
-	else if(a == xatom("_MOTIF_WM_HINTS")) {
+	else
+	if(a == xatom("_MOTIF_WM_HINTS"))
 		updatemwm(c);
-	}
-	else switch (a) {
+	else
+	switch (a) {
+	default:
+		ewmh_prop(c, a);
+		break;
 	case XA_WM_TRANSIENT_FOR:
 		XGetTransientForHint(display, c->w.w, &c->trans);
 		break;
@@ -622,12 +724,12 @@ prop_client(Client *c, Atom a) {
 		wmh = XGetWMHints(display, c->w.w);
 		if(wmh) {
 			c->noinput = !((wmh->flags&InputFocus) && wmh->input);
-			set_urgent(c, (wmh->flags & XUrgencyHint) != 0, False);
+			client_seturgent(c, (wmh->flags & XUrgencyHint) != 0, UrgClient);
 			XFree(wmh);
 		}
 		break;
 	case XA_WM_CLASS:
-		n = gettextlistproperty(&c->w, "WM_CLASS", &class);
+		n = getprop_textlist(&c->w, "WM_CLASS", &class);
 		snprint(c->props, sizeof(c->props), "%s:%s:",
 				(n > 0 ? class[0] : "<nil>"),
 				(n > 1 ? class[1] : "<nil>"));
@@ -636,7 +738,7 @@ prop_client(Client *c, Atom a) {
 		break;
 	case XA_WM_NAME:
 wmname:
-		update_client_name(c);
+		client_updatename(c);
 		break;
 	}
 }
@@ -649,43 +751,41 @@ configreq_event(Window *w, XConfigureRequestEvent *e) {
 
 	c = w->aux;
 
-	r = gravclient(c, ZR);
+	r = client_grav(c, ZR);
 	r.max = subpt(r.max, r.min);
 
-	if(e->value_mask&CWX)
+	if(e->value_mask & CWX)
 		r.min.x = e->x;
-	if(e->value_mask&CWY)
+	if(e->value_mask & CWY)
 		r.min.y = e->y;
-	if(e->value_mask&CWWidth)
+	if(e->value_mask & CWWidth)
 		r.max.x = e->width;
-	if(e->value_mask&CWHeight)
+	if(e->value_mask & CWHeight)
 		r.max.y = e->height;
 
-	if(e->value_mask&CWBorderWidth)
+	if(e->value_mask & CWBorderWidth)
 		c->border = e->border_width;
 
 	r.max = addpt(r.min, r.max);
 	cr = r;
-	r = gravclient(c, r);
+	r = client_grav(c, r);
 
-	if((Dx(cr) == Dx(screen->r)) && (Dy(cr) == Dy(screen->r)))
-		fullscreen(c, True);
-
-	if(c->sel->area->floating)
-		resize_client(c, &r);
+	if(c->sel->area->floating) {
+		client_resize(c, r);
+		sync();
+		flushenterevents();
+	}
 	else {
-		c->sel->revert = r;
-		configure_client(c);
+		c->sel->floatr = r;
+		client_configure(c);
 	}
 }
 
 static void
 destroy_event(Window *w, XDestroyWindowEvent *e) {
-	USED(w);
-	USED(e);
+	USED(w, e);
 
-	Dprint("client.c:destroy_event(%W)\n", w);
-	destroy_client(w->aux);
+	client_destroy(w->aux);
 }
 
 static void
@@ -695,11 +795,12 @@ enter_event(Window *w, XCrossingEvent *e) {
 	c = w->aux;
 	if(e->detail != NotifyInferior) {
 		if(screen->focus != c) {
-			Dprint("enter_notify(c) => %s\n", c->name);
-			focus(c, False);
+			Dprint(DGeneric, "enter_notify(c) => %s\n", c->name);
+			focus(c, false);
 		}
-		set_cursor(c, cursor[CurNormal]);
-	}else Dprint("enter_notify(c[NotifyInferior]) => %s\n", c->name);
+		client_setcursor(c, cursor[CurNormal]);
+	}else
+		Dprint(DGeneric, "enter_notify(c[NotifyInferior]) => %s\n", c->name);
 }
 
 static void
@@ -717,7 +818,7 @@ focusin_event(Window *w, XFocusChangeEvent *e) {
 	screen->focus = c;
 	if(c != old) {
 		if(c->sel)
-			draw_frame(c->sel);
+			frame_draw(c->sel);
 	}
 }
 
@@ -733,7 +834,7 @@ focusout_event(Window *w, XFocusChangeEvent *e) {
 		print_focus(&c_magic, "<magic>");
 		screen->focus = &c_magic;
 		if(c->sel)
-			draw_frame(c->sel);
+			frame_draw(c->sel);
 	}
 }
 
@@ -744,7 +845,7 @@ unmap_event(Window *w, XUnmapEvent *e) {
 	c = w->aux;
 	if(!e->send_event)
 		c->unmapped--;
-	destroy_client(c);
+	client_destroy(c);
 }
 
 static void
@@ -755,7 +856,7 @@ map_event(Window *w, XMapEvent *e) {
 	
 	c = w->aux;
 	if(c == selclient())
-		focus_client(c);
+		client_focus(c);
 }
 
 static void
@@ -766,7 +867,7 @@ property_event(Window *w, XPropertyEvent *e) {
 		return;
 
 	c = w->aux;
-	prop_client(c, e->atom);
+	client_prop(c, e->atom);
 }
 
 static Handlers handlers = {
@@ -781,40 +882,8 @@ static Handlers handlers = {
 };
 
 /* Other */
-#if 0 /* Not used at the moment */
 void
-newcol_client(Client *c, char *arg) {
-	Frame *f;
-	Area *to, *a;
-	View *v;
-
-	f = c->sel;
-	a = f->area;
-	v = f->view;
-
-	if(a->floating)
-		return;
-	if((f->anext == nil) && (f->aprev == nil))
-		return;
-
-	if(!strncmp(arg, "prev", 5)) {
-		for(to=v->area; to; to=to->next)
-			if(to->next == a) break;
-		to = new_column(v, to, 0);
-		send_to_area(to, f);
-	}
-	else if(!strncmp(arg, "next", 5)) {
-		to = new_column(v, a, 0);
-		send_to_area(to, f);
-	}
-	else
-		return;
-	flushevents(EnterWindowMask, False);
-}
-#endif
-
-void
-update_client_views(Client *c, char **tags) {
+client_setviews(Client *c, char **tags) {
 	Frame **fp, *f;
 	int cmp;
 
@@ -823,13 +892,13 @@ update_client_views(Client *c, char **tags) {
 		SET(cmp);
 		while(*fp) {
 			if(*tags) {
-				cmp = strcmp((*fp)->view->name, *tags);
+				cmp = strcmp(fp[0]->view->name, *tags);
 				if(cmp >= 0)
 					break;
 			}
 
 			f = *fp;
-			detach_from_area(f);
+			area_detach(f);
 			*fp = f->cnext;
 			if(c->sel == f)
 				c->sel = *fp;
@@ -837,18 +906,18 @@ update_client_views(Client *c, char **tags) {
 		}
 		if(*tags) {
 			if(!*fp || cmp > 0) {
-				f = create_frame(c, get_view(*tags));
+				f = frame_create(c, view_create(*tags));
 				if(f->view == screen->sel || !c->sel)
 					c->sel = f;
-				attach_to_view(f->view, f);
+				view_attach(f->view, f);
 				f->cnext = *fp;
 				*fp = f;
 			}
-			if(*fp) fp=&(*fp)->cnext;
+			if(fp[0]) fp=&fp[0]->cnext;
 			tags++;
 		}
 	}
-	update_views();
+	view_update_all();
 }
 
 static int
@@ -857,8 +926,12 @@ bsstrcmp(const void *a, const void *b) {
 }
 
 static int
-strpcmp(const void *a, const void *b) {
-	return strcmp(*(char **)a, *(char **)b);
+strpcmp(const void *ap, const void *bp) {
+	char **a, **b;
+	
+	a = (char**)ap;
+	b = (char**)bp;
+	return strcmp(*a, *b);
 }
 
 static char *badtags[] = {
@@ -870,7 +943,7 @@ static char *badtags[] = {
 void
 apply_tags(Client *c, const char *tags) {
 	uint i, j, k, n;
-	Bool add;
+	bool add;
 	char buf[512], last;
 	char *toks[32], *cur;
 
@@ -898,7 +971,9 @@ apply_tags(Client *c, const char *tags) {
 	j = 0;
 	while(buf[n] && n < sizeof(buf) && j < 32) { 
 		for(i = n; i < sizeof(buf) - 1; i++)
-			if(buf[i] == '+' || buf[i] == '-' || buf[i] == '\0')
+			if(buf[i] == '+'
+			|| buf[i] == '-'
+			|| buf[i] == '\0')
 				break;
 		last = buf[i];
 		buf[i] = '\0';
@@ -906,9 +981,11 @@ apply_tags(Client *c, const char *tags) {
 		cur = nil;
 		if(!strcmp(buf+n, "~"))
 			c->floating = add;
-		else if(!strcmp(buf+n, "!") || !strcmp(buf+n, "sel"))
+		else
+		if(!strcmp(buf+n, "!") || !strcmp(buf+n, "sel"))
 			cur = screen->sel->name;
-		else if(!Mbsearch(buf+n, badtags, bsstrcmp))
+		else
+		if(!Mbsearch(buf+n, badtags, bsstrcmp))
 			cur = buf+n;
 
 		n = i + 1;
@@ -923,54 +1000,45 @@ apply_tags(Client *c, const char *tags) {
 			}
 		}
 
-		switch(last) {
-		case '+':
+		if(last == '+')
 			add = True;
-			break;
-		case '-':
+		if(last == '-')
 			add = False;
-			break;
-		case '\0':
+		if(last == '\0')
 			buf[n] = '\0';
-			break;
-		}
 	}
 
 	if(!j)
 		return;
 
-	qsort(toks, j, sizeof(char *), strpcmp);
+	qsort(toks, j, sizeof *toks, strpcmp);
 
 	c->tags[0] = '\0';
 	for(i=0, n=0; i < j; i++)
 		if(n == 0 || strcmp(toks[i], toks[n-1])) {
 			if(i > 0)
-				strlcat(c->tags, "+", sizeof(c->tags));
-			strlcat(c->tags, toks[i], sizeof(c->tags));
+				strlcat(c->tags, "+", sizeof c->tags);
+			strlcat(c->tags, toks[i], sizeof c->tags);
 			toks[n++] = toks[i];
 		}
 	toks[n] = nil;
 
-	update_client_views(c, toks);
+	client_setviews(c, toks);
 
-	changeprop_char(&c->w, "_WMII_TAGS", "UTF8_STRING", c->tags, strlen(c->tags));
+	changeprop_string(&c->w, "_WMII_TAGS", c->tags);
 }
 
 void
 apply_rules(Client *c) {
 	Rule *r;
 
-	if(strlen(c->tags))
-		return;
-
 	if(def.tagrules.string) 	
 		for(r=def.tagrules.rule; r; r=r->next)
 			if(regexec(r->regex, c->props, nil, 0)) {
 				apply_tags(c, r->value);
-				if(c->tags[0] && strcmp(c->tags, "nil"))
-					break;
+				break;
 			}
 	if(c->tags[0] == '\0')
-		apply_tags(c, "nil");
+		apply_tags(c, "sel");
 }
 
