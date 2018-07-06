@@ -49,11 +49,11 @@ install: all
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmii
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmiir
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmiiwm
-	@echo installing scripts to ${DESTDIR}${CONFPREFIX}/wmii-${VERSION}
-	@mkdir -p ${DESTDIR}${CONFPREFIX}/wmii-${VERSION}
+	@echo installing scripts to ${DESTDIR}${CONFPREFIX}/wmii-3.5
+	@mkdir -p ${DESTDIR}${CONFPREFIX}/wmii-3.5
 	@cd rc; for i in *; do \
-		sed 's|CONFPREFIX|${CONFPREFIX}|g' <$$i >${DESTDIR}${CONFPREFIX}/wmii-${VERSION}/$$i; \
-		chmod 755 ${DESTDIR}${CONFPREFIX}/wmii-${VERSION}/$$i; \
+		sed 's|CONFPREFIX|${CONFPREFIX}|g' <$$i >${DESTDIR}${CONFPREFIX}/wmii-3.5/$$i; \
+		chmod 755 ${DESTDIR}${CONFPREFIX}/wmii-3.5/$$i; \
 	done
 	@echo installing manual page to ${DESTDIR}${MANPREFIX}/man1
 	@mkdir -p ${DESTDIR}${MANPREFIX}/man1
@@ -69,8 +69,8 @@ uninstall:
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmii
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmiir
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmiiwm
-	@echo removing scripts from ${DESTDIR}${CONFPREFIX}/wmii-${VERSION}
-	@rm -rf ${DESTDIR}${CONFPREFIX}/wmii-${VERSION}
+	@echo removing scripts from ${DESTDIR}${CONFPREFIX}/wmii-3.5
+	@rm -rf ${DESTDIR}${CONFPREFIX}/wmii-3.5
 	@echo removing manual page from ${DESTDIR}${MANPREFIX}/man1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/wmii.1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/wmiir.1
