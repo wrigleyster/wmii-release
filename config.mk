@@ -1,5 +1,5 @@
 # wmii version
-VERSION = 3.6-rc1
+VERSION = 3.6-rc2
 CONFVERSION = 3.5
 
 # Customize below to fit your system
@@ -14,7 +14,7 @@ X11LIB = /usr/X11R6/lib
 
 # includes and libs
 INCS = -I. -I${PREFIX}/include -I/usr/include -I${X11INC}
-LIBS = -L/usr/lib -lc -L${X11LIB} -lX11 -L${PREFIX}/lib -lixp -lm
+LIBS = -L/usr/lib -lc -L${X11LIB} -lX11 -L${PREFIX}/lib -lixp
 
 # flags
 #CFLAGS = -Os ${INCS} -DVERSION=\"${VERSION}\"

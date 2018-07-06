@@ -55,7 +55,7 @@ EOF
 
 # COLUMN RULES
 wmiir write /colrules <<EOF
-/1/ -> 50+50
+/.*/ -> 58+42
 EOF
 
 # TAGGING RULES
@@ -86,7 +86,6 @@ $MODKEY-$DOWN
 $MODKEY-$UP
 $MODKEY-space
 $MODKEY-d
-$MODKEY-f
 $MODKEY-s
 $MODKEY-m
 $MODKEY-a
@@ -189,8 +188,6 @@ do
 			xwrite /tag/sel/ctl colmode sel stack;;
 		$MODKEY-m)
 			xwrite /tag/sel/ctl colmode sel max;;
-		$MODKEY-f)
-			xwrite /tag/sel/0/sel/geom 0 0 0 0;;
 		$MODKEY-a)
 			`conf_which "$(proglist $ACTIONS_DIRS | $DMENU)"` &;;
 		$MODKEY-p)
@@ -214,7 +211,7 @@ do
 		$MODKEY-Shift-c)
 			xwrite /client/sel/ctl kill;;
 		$MODKEY-Shift-t)
-			xwrite "/client/`wmiir read /client/sel/ctl`/tags" `tagsmenu` &;;
+			xwrite "/client/`wmiir read /client/sel/ctl`/tags" "`tagsmenu`" &;;
 		$MODKEY-Shift-[0-9])
 			xwrite /client/sel/tags "`echo $key | sed 's/.*-//'`";;
 		esac;;

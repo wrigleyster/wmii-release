@@ -52,12 +52,34 @@ insert_frame(Frame *pos, Frame *f, Bool before) {
 
 	if(before) {
 		Frame *ft;
-		for(ft=a->frame; ft && ft->anext != pos; ft=ft->anext);
+		for(ft=a->frame; ft; ft=ft->anext)
+			if(ft->anext == pos) break;
 		pos=ft;
 	}
 	Frame **p = pos ? &pos->anext : &a->frame;
 	f->anext = *p;
 	*p = f;
+}
+
+void
+resize_frame(Frame *f, XRectangle *r) {
+	BlitzAlign stickycorner = 0;
+	Client *c;
+
+	c = f->client;
+
+	if(f->rect.x != r->x && (f->rect.x + f->rect.width) == (r->x + r->width))
+		stickycorner |= EAST;
+	else
+		stickycorner |= WEST;
+	if(f->rect.y != r->y && (f->rect.y + f->rect.height) == (r->y + r->height))
+		stickycorner |= SOUTH;
+	else    
+		stickycorner |= NORTH;
+
+	f->rect = *r;
+	if((f->area->mode != Colstack) || (f->area->sel == f))
+		match_sizehints(c, &f->rect, f->area->floating, stickycorner);
 }
 
 void

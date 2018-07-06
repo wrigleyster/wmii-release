@@ -10,7 +10,7 @@ unsigned int
 textwidth_l(BlitzFont *font, char *text, unsigned int len) {
 	if(font->set) {
 		XRectangle r;
-		XmbTextExtents(font->set, text, len, nil, &r);
+		XmbTextExtents(font->set, text, len, &r, nil);
 		return r.width;
 	}
 	return XTextWidth(font->xfont, text, len);
@@ -32,24 +32,20 @@ loadfont(Blitz *blitz, BlitzFont *font) {
 	font->set = XCreateFontSet(blitz->dpy, fontname, &missing, &n, &def);
 	if(missing) {
 		while(n--)
-			fprintf(stderr, "wmii: missing fontset: %s\n", missing[n]);
+			fprintf(stderr, "wmiiwm: missing fontset for '%s': %s\n",
+					fontname, missing[n]);
 		XFreeStringList(missing);
 	}
 	if(font->set) {
 		XFontSetExtents *font_extents;
 		XFontStruct **xfonts;
 		char **font_names;
-		unsigned int i;
+
 		font->ascent = font->descent = 0;
 		font_extents = XExtentsOfFontSet(font->set);
-		n = XFontsOfFontSet(font->set, &xfonts, &font_names);
-		for(i = 0, font->ascent = 0, font->descent = 0; i < n; i++) {
-			if(font->ascent < (*xfonts)->ascent)
-				font->ascent = (*xfonts)->ascent;
-			if(font->descent < (*xfonts)->descent)
-				font->descent = (*xfonts)->descent;
-			xfonts++;
-		}
+		XFontsOfFontSet(font->set, &xfonts, &font_names);
+		font->ascent = xfonts[0]->ascent;
+		font->descent = xfonts[0]->descent;
 	}
 	else {
 		if(font->xfont)
@@ -57,8 +53,12 @@ loadfont(Blitz *blitz, BlitzFont *font) {
 		font->xfont = nil;
 		font->xfont = XLoadQueryFont(blitz->dpy, fontname);
 		if (!font->xfont) {
-			fprintf(stderr, "wmii: error, cannot load 'fixed' font\n");
-			exit(1);
+			if(!strncmp(fontname, BLITZ_FONT, sizeof(BLITZ_FONT)))
+				ixp_eprint("wmiiwm: error, cannot load '%s' font\n",
+						BLITZ_FONT);
+			free(font->fontstr);
+			font->fontstr = ixp_estrdup(BLITZ_FONT);
+			return loadfont(blitz, font);
 		}
 		font->ascent = font->xfont->ascent;
 		font->descent = font->xfont->descent;
@@ -88,6 +88,7 @@ draw_label(BlitzBrush *b, char *text) {
 	unsigned int x, y, w, h, len;
 	Bool shortened = False;
 	static char buf[2048];
+	XRectangle r = {0};
 	XGCValues gcv;
 
 	draw_tile(b);
@@ -101,7 +102,8 @@ draw_label(BlitzBrush *b, char *text) {
 	h = b->font->ascent + b->font->descent;
 	y = b->rect.y + b->rect.height / 2 - h / 2 + b->font->ascent;
 	/* shorten text if necessary */
-	while(len && (w = textwidth(b->font, buf)) > b->rect.width - h) {
+	while(len
+	  && (w = textwidth(b->font, buf)) > b->rect.width - (b->font->height & ~1)) {
 		buf[--len] = 0;
 		shortened = True;
 	}
@@ -116,12 +118,17 @@ draw_label(BlitzBrush *b, char *text) {
 		if (len > 1)
 			buf[len - 1] = '.';
 	}
+
+	if(b->font->set) {
+		XmbTextExtents(b->font->set, text, len, &r, nil);
+	}
+
 	switch (b->align) {
 	case EAST:
 		x = b->rect.x + b->rect.width - (w + (b->font->height / 2));
 		break;
 	default:
-		x = b->rect.x + (b->font->height / 2);
+		x = b->rect.x + (b->font->height / 2) - r.x;
 		break;
 	}
 	if(b->font->set) {
@@ -146,9 +153,9 @@ drawbg(Display *dpy, Drawable drawable, GC gc, XRectangle *rect,
 	}
 	if(!border)
 		return;
-	XSetLineAttributes(dpy, gc, 1, LineSolid, CapButt, JoinMiter);
+	XSetLineAttributes(dpy, gc, 0, LineSolid, CapButt, JoinMiter);
 	XSetForeground(dpy, gc, c.border);
-	XDrawRectangles(dpy, drawable, gc, rect, 1);
+	XDrawRectangle(dpy, drawable, gc, rect->x, rect->y, rect->width - 1, rect->height - 1);
 }
 
 void
