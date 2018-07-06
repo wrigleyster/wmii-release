@@ -6,7 +6,7 @@ new file mode 100644
 --- /dev/null
 +++ b/config.local.mk
 @@ -0,0 +1,5 @@
-+DESTDIR=$(ROOT)/debian/wmii-hg/
++DESTDIR=$(ROOT)/debian/wmii/
 +PREFIX=/usr
 +ETC=/etc/X11
 +STATIC=

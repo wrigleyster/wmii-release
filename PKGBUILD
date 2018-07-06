@@ -1,7 +1,7 @@
 
 pkgname=wmii
 pkgver=3.9
-pkgrel=2
+pkgrel=4
 pkgdesc="A lightweight, dynamic window manager for X11"
 url="http://wmii.suckless.org"
 license=("MIT")
