@@ -1,6 +1,6 @@
 
 pkgname=wmii
-pkgver=3.9.1
+pkgver=3.9.2
 pkgrel=1
 pkgdesc="A lightweight, dynamic window manager for X11"
 url="http://wmii.suckless.org"
