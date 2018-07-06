@@ -1,4 +1,4 @@
-/* Copyright ©2007 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyight ©2007-2009 Kris Maglione <fbsdaemon@gmail.com>
  * See LICENSE file for license details.
  */
 #define IXP_NO_P9_
@@ -35,12 +35,13 @@ write_data(IxpCFid *fid, char *name) {
 	int len;
 
 	buf = emalloc(fid->iounit);;
-	do {
+	for(;;) {
 		len = read(0, buf, fid->iounit);
-		if(len > 0 && ixp_write(fid, buf, len) != len)
-			fatal("cannot write file '%s': %r\n", name);
-	} while(len > 0);
-
+		if(len <= 0)
+			break;
+		if(ixp_write(fid, buf, len) != len)
+			fatal("cannot write file %q\n", name);
+	}
 	free(buf);
 }
 
@@ -88,16 +89,24 @@ timestr(uint val) {
 }
 
 static void
-print_stat(Stat *s, int lflag) {
+print_stat(Stat *s, int lflag, char *file, int pflag) {
+	char *slash;
+
+	slash = "";
+	if(pflag)
+		slash = "/";
+	else
+		file = "";
+
 	if(lflag)
-		print("%s %s %s %5llud %s %s\n",
+		print("%s %s %s %5llud %s %s%s%s\n",
 				modestr(s->mode), s->uid, s->gid, s->length,
-				timestr(s->mtime), s->name);
+				timestr(s->mtime), file, slash, s->name);
 	else {
 		if((s->mode&P9_DMDIR) && strcmp(s->name, "/"))
-			print("%s/\n", s->name);
+			print("%s%s%s/\n", file, slash, s->name);
 		else
-			print("%s\n", s->name);
+			print("%s%s%s\n", file, slash, s->name);
 	}
 }
 
@@ -125,8 +134,8 @@ xwrite(int argc, char *argv[]) {
 static int
 xawrite(int argc, char *argv[]) {
 	IxpCFid *fid;
-	char *file, *buf, *arg;
-	int nbuf, mbuf, len;
+	char *file, *buf;
+	int nbuf, i;
 
 	ARGBEGIN{
 	default:
@@ -138,20 +147,15 @@ xawrite(int argc, char *argv[]) {
 	if(fid == nil)
 		fatal("Can't open file '%s': %r\n", file);
 
-	nbuf = 0;
-	mbuf = 128;
-	buf = emalloc(mbuf);
+	nbuf = 1;
+	for(i=0; i < argc; i++)
+		nbuf += strlen(argv[i]) + (i > 0);
+	buf = emalloc(nbuf);
+	buf[0] = '\0';
 	while(argc) {
-		arg = ARGF();
-		len = strlen(arg);
-		if(nbuf + len + 1 > mbuf) {
-			mbuf <<= 1;
-			buf = erealloc(buf, mbuf);
-		}
-		memcpy(buf+nbuf, arg, len);
-		nbuf += len;
+		strcat(buf, ARGF());
 		if(argc)
-			buf[nbuf++] = ' ';
+			strcat(buf, " ");
 	}
 
 	if(ixp_write(fid, buf, nbuf) == -1)
@@ -185,7 +189,6 @@ xcreate(int argc, char *argv[]) {
 static int
 xremove(int argc, char *argv[]) {
 	char *file;
-	int n;
 
 	ARGBEGIN{
 	default:
@@ -194,10 +197,8 @@ xremove(int argc, char *argv[]) {
 
 	file = EARGF(usage());
 	do {
-		if(ixp_remove(client, file) == 0) {
+		if(!ixp_remove(client, file))
 			fprint(2, "%s: Can't remove file '%s': %r\n", argv0, file);
-			n++;
-		}
 	}while((file = ARGF()));
 	return 0;
 }
@@ -227,8 +228,8 @@ xread(int argc, char *argv[]) {
 		ixp_close(fid);
 
 		if(count == -1)
-			fprint(2, "%s: cannot read file/directory '%s': %r\n", argv0, file);
-	}while((file = ARGF()));
+			fprint(2, "%s: cannot read file '%s': %r\n", argv0, file);
+	} while((file = ARGF()));
 
 	return 0;
 }
@@ -240,9 +241,10 @@ xls(int argc, char *argv[]) {
 	IxpCFid *fid;
 	char *file;
 	char *buf;
-	int lflag, dflag, count, nstat, mstat, i;
+	int lflag, dflag, pflag;
+	int count, nstat, mstat, i;
 
-	lflag = dflag = 0;
+	lflag = dflag = pflag = 0;
 
 	ARGBEGIN{
 	case 'l':
@@ -251,52 +253,78 @@ xls(int argc, char *argv[]) {
 	case 'd':
 		dflag++;
 		break;
+	case 'p':
+		pflag++;
+		break;
 	default:
 		usage();
 	}ARGEND;
 
 	file = EARGF(usage());
+	do {
+		stat = ixp_stat(client, file);
+		if(stat == nil)
+			fatal("cannot stat file '%s': %r\n", file);
 
-	stat = ixp_stat(client, file);
-	if(stat == nil)
-		fatal("cannot stat file '%s': %r\n", file);
-
-	if(dflag || (stat->mode&P9_DMDIR) == 0) {
-		print_stat(stat, lflag);
-		ixp_freestat(stat);
-		return 0;
-	}
-	ixp_freestat(stat);
-
-	fid = ixp_open(client, file, P9_OREAD);
-	if(fid == nil)
-		fatal("Can't open file '%s': %r\n", file);
-
-	nstat = 0;
-	mstat = 16;
-	stat = emalloc(sizeof(*stat) * mstat);
-	buf = emalloc(fid->iounit);
-	while((count = ixp_read(fid, buf, fid->iounit)) > 0) {
-		m = ixp_message(buf, count, MsgUnpack);
-		while(m.pos < m.end) {
-			if(nstat == mstat) {
-				mstat <<= 1;
-				stat = erealloc(stat, sizeof(*stat) * mstat);
-			}
-			ixp_pstat(&m, &stat[nstat++]);
+		i = strlen(file);
+		if(file[i-1] == '/') {
+			file[i-1] = '\0';
+			if(!(stat->mode&P9_DMDIR))
+				fatal("%s: not a directory", file);
 		}
-	}
-	ixp_close(fid);
+		if(dflag || (stat->mode&P9_DMDIR) == 0) {
+			print_stat(stat, lflag, file, pflag);
+			ixp_freestat(stat);
+			continue;
+		}
+		ixp_freestat(stat);
 
-	qsort(stat, nstat, sizeof(*stat), comp_stat);
-	for(i = 0; i < nstat; i++) {
-		print_stat(&stat[i], lflag);
-		ixp_freestat(&stat[i]);
-	}
-	free(stat);
+		fid = ixp_open(client, file, P9_OREAD);
+		if(fid == nil)
+			fatal("Can't open file '%s': %r\n", file);
+
+		nstat = 0;
+		mstat = 16;
+		stat = emalloc(mstat * sizeof *stat);
+		buf = emalloc(fid->iounit);
+		while((count = ixp_read(fid, buf, fid->iounit)) > 0) {
+			m = ixp_message(buf, count, MsgUnpack);
+			while(m.pos < m.end) {
+				if(nstat == mstat) {
+					mstat <<= 1;
+					stat = erealloc(stat, mstat * sizeof *stat);
+				}
+				ixp_pstat(&m, &stat[nstat++]);
+			}
+		}
+		ixp_close(fid);
+
+		qsort(stat, nstat, sizeof *stat, comp_stat);
+		for(i = 0; i < nstat; i++) {
+			print_stat(&stat[i], lflag, file, pflag);
+			ixp_freestat(&stat[i]);
+		}
+		free(stat);
+	} while((file = ARGF()));
 
 	if(count == -1)
 		fatal("cannot read directory '%s': %r\n", file);
+	return 0;
+}
+
+static int
+xnamespace(int argc, char *argv[]) {
+	char *path;
+
+	ARGBEGIN{
+	default:
+		usage();
+	}ARGEND;
+
+	path = ixp_namespace();
+	if(path == nil)
+		fatal("can't find namespace: %r\n");
+	print("%s\n", path);
 	return 0;
 }
 
@@ -314,6 +342,8 @@ xsetsid(int argc, char *argv[]) {
 	}ARGEND;
 	if(av0 == nil)
 		av0 = argv[0];
+	if(av0 == nil)
+		return 1;
 
 	setsid();
 	execvp(av0, argv);
@@ -325,17 +355,20 @@ typedef struct exectab exectab;
 struct exectab {
 	char *cmd;
 	int (*fn)(int, char**);
-} etab[] = {
+} fstab[] = {
 	{"cat", xread},
 	{"create", xcreate},
 	{"ls", xls},
 	{"read", xread},
 	{"remove", xremove},
 	{"rm", xremove},
-	{"setsid", xsetsid},
 	{"write", xwrite},
 	{"xwrite", xawrite},
-	{0, 0}
+	{0, }
+}, utiltab[] = {
+	{"namespace", xnamespace},
+	{"setsid", xsetsid},
+	{0, }
 };
 
 int
@@ -344,13 +377,14 @@ main(int argc, char *argv[]) {
 	exectab *tab;
 	int ret;
 
+	quotefmtinstall();
 	fmtinstall('r', errfmt);
 
 	address = getenv("WMII_ADDRESS");
 
 	ARGBEGIN{
 	case 'v':
-		print("%s-" VERSION ", ©2007 Kris Maglione\n", argv0);
+		print("%s-" VERSION ", ©2009 Kris Maglione\n", argv0);
 		exit(0);
 	case 'a':
 		address = EARGF(usage());
@@ -359,14 +393,21 @@ main(int argc, char *argv[]) {
 		usage();
 	}ARGEND;
 
-	if(!address)
-		fatal("$WMII_ADDRESS not set\n");
+	if(argc < 1)
+		usage();
 
-	client = ixp_mount(address);
+	for(tab=utiltab; tab->cmd; tab++)
+		if(!strcmp(*argv, tab->cmd))
+			return tab->fn(argc, argv);
+
+	if(address && *address)
+		client = ixp_mount(address);
+	else
+		client = ixp_nsmount("wmii");
 	if(client == nil)
 		fatal("can't mount: %r\n");
 
-	for(tab = etab; tab->cmd; tab++)
+	for(tab=fstab; tab->cmd; tab++)
 		if(strcmp(*argv, tab->cmd) == 0) break;
 	if(tab->cmd == 0)
 		usage();
@@ -376,3 +417,4 @@ main(int argc, char *argv[]) {
 	ixp_unmount(client);
 	return ret;
 }
+

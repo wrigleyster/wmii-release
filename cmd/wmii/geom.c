@@ -1,4 +1,4 @@
-/* Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -7,7 +7,7 @@
 bool
 rect_haspoint_p(Point pt, Rectangle r) {
 	return (pt.x >= r.min.x) && (pt.x < r.max.x)
-		&& (pt.y >= r.min.y) && (pt.y < r.max.y);
+	    && (pt.y >= r.min.y) && (pt.y < r.max.y);
 }
 
 bool
@@ -22,7 +22,7 @@ Rectangle
 rect_intersection(Rectangle r, Rectangle r2) {
 	Rectangle ret;
 
-	/* canonrect(ret) != ret if not intersection */
+	/* ret != canonrect(ret) ≡ no intersection. */
 	ret.min.x = max(r.min.x, r2.min.x);
 	ret.max.x = min(r.max.x, r2.max.x);
 	ret.min.y = max(r.min.y, r2.min.y);
@@ -60,60 +60,35 @@ quadrant(Rectangle r, Point pt) {
 Cursor
 quad_cursor(Align align) {
 	switch(align) {
-	case NEast:
-		return cursor[CurNECorner];
-	case NWest:
-		return cursor[CurNWCorner];
-	case SEast:
-		return cursor[CurSECorner];
-	case SWest:
-		return cursor[CurSWCorner];
-	default:
-		return cursor[CurMove];
+	case NEast: return cursor[CurNECorner];
+	case NWest: return cursor[CurNWCorner];
+	case SEast: return cursor[CurSECorner];
+	case SWest: return cursor[CurSWCorner];
+	case South:
+	case North: return cursor[CurDVArrow];
+	case East:
+	case West:  return cursor[CurDHArrow];
+	default:    return cursor[CurMove];
 	}
 }
 
 Align
 get_sticky(Rectangle src, Rectangle dst) {
-	Align stickycorner = 0;
+	Align corner;
 
-	if(src.min.x != dst.min.x && src.max.x == dst.max.x)
-		stickycorner |= East;
+	corner = 0;
+	if(src.min.x != dst.min.x
+	&& src.max.x == dst.max.x)
+		corner |= East;
 	else
-		stickycorner |= West;
-	if(src.min.y != dst.min.y && src.max.y == dst.max.y)
-		stickycorner |= South;
-	else    
-		stickycorner |= North;
+		corner |= West;
 
-	return stickycorner;
+	if(src.min.y != dst.min.y
+	&& src.max.y == dst.max.y)
+		corner |= South;
+	else
+		corner |= North;
+
+	return corner;
 }
-
-/* XXX: These don't belong here. */
-/* Blech. */
-#define VECTOR(type, nam, c) \
-void                                                                    \
-vector_##c##init(Vector_##nam *v) {                                     \
-	memset(v, 0, sizeof *v);                                        \
-}                                                                       \
-                                                                        \
-void                                                                    \
-vector_##c##free(Vector_##nam *v) {                                     \
-	free(v->ary);                                                   \
-	memset(v, 0, sizeof *v);                                        \
-}                                                                       \
-                                                                        \
-void                                                                    \
-vector_##c##push(Vector_##nam *v, type val) {                           \
-	if(v->n == v->size) {                                           \
-		if(v->size == 0)                                        \
-			v->size = 2;                                    \
-		v->size <<= 2;                                          \
-		v->ary = erealloc(v->ary, v->size * sizeof *v->ary);    \
-	}                                                               \
-	v->ary[v->n++] = val;                                           \
-}                                                                       \
-
-VECTOR(long, long, l)
-VECTOR(Rectangle, rect, r)
 

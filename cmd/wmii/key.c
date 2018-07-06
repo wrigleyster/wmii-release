@@ -1,4 +1,5 @@
-/* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
+/* Copyright ©2006-2009 Kris Maglione <fbsdaemon at Gmail>
+ * Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -7,22 +8,19 @@
 
 void
 init_lock_keys(void) {
+	static int masks[] = {
+		ShiftMask, LockMask, ControlMask, Mod1Mask, Mod2Mask,
+		Mod3Mask, Mod4Mask, Mod5Mask
+	};
 	XModifierKeymap *modmap;
 	KeyCode numlock;
-	static int masks[] = {
-		ShiftMask, LockMask, ControlMask,
-		Mod1Mask, Mod2Mask, Mod3Mask,
-		Mod4Mask, Mod5Mask
-	};
-	int i;
+	int i, max;
 
 	numlock_mask = 0;
 	modmap = XGetModifierMapping(display);
 	numlock = keycode("Num_Lock");
 	if(numlock)
 	if(modmap && modmap->max_keypermod > 0) {
-		int max;
-		
 		max = nelem(masks) * modmap->max_keypermod;
 		for(i = 0; i < max; i++)
 			if(modmap->modifiermap[i] == numlock)
@@ -32,48 +30,40 @@ init_lock_keys(void) {
 	valid_mask = 255 & ~(numlock_mask | LockMask);
 }
 
-ulong
-str2modmask(const char *val) {
-	ulong mod = 0;
+static void
+freekey(Key *k) {
+	Key *n;
 
-	if (strstr(val, "Shift"))
-		mod |= ShiftMask;
-	if (strstr(val, "Control"))
-		mod |= ControlMask;
-	if (strstr(val, "Mod1"))
-		mod |= Mod1Mask;
-	if (strstr(val, "Mod2"))
-		mod |= Mod2Mask;
-	if (strstr(val, "Mod3"))
-		mod |= Mod3Mask;
-	if (strstr(val, "Mod4"))
-		mod |= Mod4Mask;
-	if (strstr(val, "Mod5"))
-		mod |= Mod5Mask;
-	return mod;
+	while((n = k)) {
+		k = k->next;
+		free(n);
+	}
+}
+
+static void
+_grab(XWindow w, int keycode, uint mod) {
+	XGrabKey(display, keycode, mod, w,
+			true, GrabModeAsync, GrabModeAsync);
 }
 
 static void
 grabkey(Key *k) {
-	XGrabKey(display, k->key, k->mod, scr.root.w,
-			True, GrabModeAsync, GrabModeAsync);
+	_grab(scr.root.xid, k->key, k->mod);
+	_grab(scr.root.xid, k->key, k->mod | LockMask);
 	if(numlock_mask) {
-		XGrabKey(display, k->key, k->mod | numlock_mask, scr.root.w,
-				True, GrabModeAsync, GrabModeAsync);
-		XGrabKey(display, k->key, k->mod | numlock_mask | LockMask, scr.root.w,
-				True, GrabModeAsync, GrabModeAsync);
+		_grab(scr.root.xid, k->key, k->mod | numlock_mask);
+		_grab(scr.root.xid, k->key, k->mod | numlock_mask | LockMask);
 	}
-	sync();
 }
 
 static void
 ungrabkey(Key *k) {
-	XUngrabKey(display, k->key, k->mod, scr.root.w);
+	XUngrabKey(display, k->key, k->mod, scr.root.xid);
+	XUngrabKey(display, k->key, k->mod | LockMask, scr.root.xid);
 	if(numlock_mask) {
-		XUngrabKey(display, k->key, k->mod | numlock_mask, scr.root.w);
-		XUngrabKey(display, k->key, k->mod | numlock_mask | LockMask, scr.root.w);
+		XUngrabKey(display, k->key, k->mod | numlock_mask, scr.root.xid);
+		XUngrabKey(display, k->key, k->mod | numlock_mask | LockMask, scr.root.xid);
 	}
-	sync();
 }
 
 static Key *
@@ -81,19 +71,20 @@ name2key(const char *name) {
 	Key *k;
 
 	for(k=key; k; k=k->lnext)
-		if(!strncmp(k->name, name, sizeof(k->name)))
+		if(!strncmp(k->name, name, sizeof k->name))
 			return k;
 	return nil;
 }
 
-static Key *
+static Key*
 getkey(const char *name) {
+	Key *k, *r;
 	char buf[128];
 	char *seq[8];
 	char *kstr;
+	int mask;
 	uint i, toks;
 	static ushort id = 1;
-	Key *k, *r;
 
 	r = nil;
 
@@ -101,23 +92,24 @@ getkey(const char *name) {
 		ungrabkey(k);
 		return k;
 	}
-	utflcpy(buf, name, sizeof(buf));
+	utflcpy(buf, name, sizeof buf);
 	toks = tokenize(seq, 8, buf, ',');
 	for(i = 0; i < toks; i++) {
 		if(!k)
-			r = k = emallocz(sizeof(Key));
+			r = k = emallocz(sizeof *k);
 		else {
-			k->next = emallocz(sizeof(Key));
+			k->next = emallocz(sizeof *k);
 			k = k->next;
 		}
-		utflcpy(k->name, name, sizeof(k->name));
-		kstr = strrchr(seq[i], '-');
-		if(kstr)
-			kstr++;
-		else
-			kstr = seq[i];
-		k->key = XKeysymToKeycode(display, XStringToKeysym(kstr));
-		k->mod = str2modmask(seq[i]);
+		utflcpy(k->name, name, sizeof k->name);
+		if(parsekey(seq[i], &mask, &kstr)) {
+			k->key = keycode(kstr);
+			k->mod = mask;
+		}
+		if(k->key == 0) {
+			freekey(r);
+			return nil;
+		}
 	}
 	if(r) {
 		r->id = id++;
@@ -147,12 +139,12 @@ fake_keypress(ulong mod, KeyCode key) {
 	XKeyEvent e;
 	Client *c;
 
-	c = screen->focus;
-	if(c == nil || c->w.w == 0)
+	c = disp.focus;
+	if(c == nil || c->w.xid == 0)
 		return;
 
 	e.time = CurrentTime;
-	e.window = c->w.w;
+	e.window = c->w.xid;
 	e.display = display;
 	e.state = mod;
 	e.keycode = key;
@@ -167,10 +159,11 @@ fake_keypress(ulong mod, KeyCode key) {
 
 static Key *
 match_keys(Key *k, ulong mod, KeyCode keycode, bool seq) {
-	Key *ret = nil, *next;
+	Key *ret, *next;
+	volatile int i; /* shut up ken */
 
-	/* I *hate* GCC 4. */
-	for(next = k->tnext; k; (void)((k=next) && (next=k->tnext))) {
+	ret = nil;
+	for(next = k->tnext; k; i = (k=next) && (next=k->tnext)) {
 		if(seq)
 			k = k->next;
 		if(k && (k->mod == mod) && (k->key == keycode)) {
@@ -188,7 +181,7 @@ kpress_seq(XWindow w, Key *done) {
 	Key *found;
 
 	next_keystroke(&mod, &key);
-	found = match_keys(done, mod, key, True);
+	found = match_keys(done, mod, key, true);
 	if((done->mod == mod) && (done->key == key))
 		fake_keypress(mod, key); /* double key */
 	else {
@@ -206,34 +199,31 @@ kpress(XWindow w, ulong mod, KeyCode keycode) {
 	Key *k, *found;
 
 	for(k=key; k; k=k->lnext)
-		 k->tnext=k->lnext;
-	found = match_keys(key, mod, keycode, False);
+		 k->tnext = k->lnext;
+
+	found = match_keys(key, mod, keycode, false);
 	if(!found) /* grabbed but not found */
 		XBell(display, 0);
 	else if(!found->tnext && !found->next)
 		event("Key %s\n", found->name);
 	else {
-		XGrabKeyboard(display, w, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-		flushevents(FocusChangeMask, True);
+		XGrabKeyboard(display, w, true, GrabModeAsync, GrabModeAsync, CurrentTime);
+		flushevents(FocusChangeMask, true);
 		kpress_seq(w, found);
 		XUngrabKeyboard(display, CurrentTime);
-		sync();
 	}
 }
 
 void
 update_keys(void) {
-	Key *k, *n;
+	Key *k;
 	char *l, *p;
 
 	init_lock_keys();
 	while((k = key)) {
 		key = key->lnext;
 		ungrabkey(k);
-		while((n = k)) {
-			k = k->next;
-			free(n);
-		}
+		freekey(k);
 	}
 	for(l = p = def.keys; p && *p;) {
 		if(*p == '\n') {
@@ -250,5 +240,5 @@ update_keys(void) {
 		if((k = getkey(l)))
 			grabkey(k);
 	}
-	sync();
 }
+

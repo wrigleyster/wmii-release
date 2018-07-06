@@ -1,5 +1,5 @@
 /* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
- * Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+ * Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #define EXTERN
@@ -10,21 +10,22 @@
 #include <fcntl.h>
 #include <locale.h>
 #include <pwd.h>
-#include <signal.h>
+#include <sys/signal.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include "fns.h"
 
 static const char
-	version[] = "wmii-"VERSION", ©2007 Kris Maglione\n";
+	version[] = "wmii-"VERSION", ©2009 Kris Maglione\n";
 
-static int (*xlib_errorhandler) (Display*, XErrorEvent*);
-static char *address, *ns_path;
-static int check_other_wm;
-static struct sigaction sa;
-static struct passwd *passwd;
-static int sleeperfd, sock, exitsignal;
+static char*	address;
+static char*	ns_path;
+static int	sleeperfd;
+static int	sock;
+static int	exitsignal;
+
+static struct sigaction	sa;
+static struct passwd*	passwd;
 
 static void
 usage(void) {
@@ -44,7 +45,7 @@ scan_wins(void) {
 	XWindowAttributes wa;
 	XWindow d1, d2;
 
-	if(XQueryTree(display, scr.root.w, &d1, &d2, &wins, &num)) {
+	if(XQueryTree(display, scr.root.xid, &d1, &d2, &wins, &num)) {
 		for(i = 0; i < num; i++) {
 			if(!XGetWindowAttributes(display, wins[i], &wa))
 				continue;
@@ -67,49 +68,8 @@ scan_wins(void) {
 		XFree(wins);
 }
 
-static char*
-ns_display(void) {
-	char *s, *disp;
-
-	disp = getenv("DISPLAY");
-	if(disp == nil)
-		fatal("DISPLAY is unset");
-
-	disp = estrdup(disp);
-	s = &disp[strlen(disp) - 2];
-	if(strcmp(s, ".0") == 0)
-		*s = '\0';
-
-	s = emalloc(strlen(disp) + strlen(user) + strlen("/tmp/ns..") + 1);
-	sprint(s, "/tmp/ns.%s.%s", user, disp);
-
-	free(disp);
-	return s;
-}
-
-static void
-rmkdir(char *path, int mode) {
-	char *p;
-	int ret;
-	char c;
-
-	for(p = path+1; ; p++) {
-		c = *p;
-		if((c == '/') || (c == '\0')) {
-			*p = '\0';
-			ret = mkdir(path, mode);
-			if((ret == -1) && (errno != EEXIST))
-				fatal("Can't create path '%s': %r", path);
-			*p = c;
-		}
-		if(c == '\0')
-			break;
-	}
-}
-
 static void
 init_ns(void) {
-	struct stat st;
 	char *s;
 
 	if(address && strncmp(address, "unix!", 5) == 0) {
@@ -117,35 +77,24 @@ init_ns(void) {
 		s = strrchr(ns_path, '/');
 		if(s != nil)
 			*s = '\0';
-	}
-	else if((s = getenv("NAMESPACE")))
-		ns_path = s;
-	else
-		ns_path = ns_display();
+		if(ns_path[0] != '/' || ns_path[0] == '\0')
+			fatal("address %q is not an absolute path", address);
+		setenv("NAMESPACE", ns_path, true);
+	}else
+		ns_path = ixp_namespace();
 
-	if(ns_path[0] != '/' || ns_path[0] == '\0')
-		fatal("Bad ns_path");
-
-	rmkdir(ns_path, 0700);
-
-	if(stat(ns_path, &st))
-		fatal("Can't stat ns_path '%s': %r", ns_path);
-	if(getuid() != st.st_uid)
-		fatal("ns_path '%s' exists but is not owned by you", ns_path);
-	if(st.st_mode & 077)
-		if(chmod(ns_path, st.st_mode & ~077))
-			fatal("ns_path '%s' exists, but has group or world permissions", ns_path);
+	if(ns_path == nil)
+		fatal("Bad namespace path: %r\n");
 }
 
 static void
 init_environment(void) {
 	init_ns();
 
-	if(address == nil)
+	if(address)
+		setenv("WMII_ADDRESS", address, true);
+	else
 		address = smprint("unix!%s/wmii", ns_path);
-
-	setenv("WMII_NS_DIR", ns_path, True);
-	setenv("WMII_ADDRESS", address, True);
 }
 
 static void
@@ -166,14 +115,16 @@ init_cursors(void) {
 	create_cursor(CurSWCorner, XC_bottom_left_corner);
 	create_cursor(CurMove, XC_fleur);
 	create_cursor(CurDHArrow, XC_sb_h_double_arrow);
+	create_cursor(CurDVArrow, XC_sb_v_double_arrow);
 	create_cursor(CurInput, XC_xterm);
 	create_cursor(CurSizing, XC_sizing);
 	create_cursor(CurIcon, XC_icon);
+	create_cursor(CurTCross, XC_tcross);
 
 	XAllocNamedColor(display, scr.colormap,
 			"black", &black, &dummy);
 	pix = XCreateBitmapFromData(
-			display, scr.root.w,
+			display, scr.root.xid,
 			zchar, 1, 1);
 
 	cursor[CurNone] = XCreatePixmapCursor(display,
@@ -184,26 +135,13 @@ init_cursors(void) {
 	XFreePixmap(display, pix);
 }
 
-static void
-init_screen(WMScreen *screen) {
-
-	screen->r = scr.rect;
-	def.snap = Dy(scr.rect) / 63;
-
-	sel_screen = pointerscreen();
-}
-
-static void
-cleanup(void) {
-	while(client) 
-		client_destroy(client);
-	ixp_server_close(&srv);
-	close(sleeperfd);
-}
-
-struct {
-	uchar rcode, ecode;
-} itab[] = {
+/*
+ * There's no way to check accesses to destroyed windows, thus
+ * those cases are ignored (especially on UnmapNotifies).
+ * Other types of errors call Xlib's default error handler, which
+ * calls exit().
+ */
+ErrorCode ignored_xerrors[] = {
 	{ 0, BadWindow },
 	{ X_SetInputFocus, BadMatch },
 	{ X_PolyText8, BadDrawable },
@@ -214,35 +152,73 @@ struct {
 	{ X_GetAtomName, BadAtom },
 };
 
-/*
- * There's no way to check accesses to destroyed windows, thus
- * those cases are ignored (especially on UnmapNotifies).
- * Other types of errors call Xlib's default error handler, which
- * calls exit().
- */
-static int
-errorhandler(Display *dpy, XErrorEvent *error) {
-	static int dead;
-	int i;
+void
+init_screens(void) {
+	Rectangle *rects;
+	View *v;
+	int i, n, m;
 
-	USED(dpy);
+#ifdef notdef
+	d.x = Dx(scr.rect) - Dx(screen->r);
+	d.y = Dy(scr.rect) - Dy(screen->r);
+	for(v=view; v; v=v->next) {
+		v->r.max.x += d.x;
+		v->r.max.y += d.y;
+	}
+#endif
 
-	if(check_other_wm)
-		fatal("another window manager is already running");
+	/* Reallocate screens, zero any new ones. */
+	rects = xinerama_screens(&n);
+	m = max(n, nscreens);
+	screens = erealloc(screens, (m + 1) * sizeof *screens);
+	screens[m] = nil;
+	for(v=view; v; v=v->next) {
+		v->areas = erealloc(v->areas, m * sizeof *v->areas);
+		v->r = erealloc(v->r, m * sizeof *v->r);
+	}
 
-	for(i = 0; i < nelem(itab); i++)
-		if((itab[i].rcode == 0 || itab[i].rcode == error->request_code)
-		&& (itab[i].ecode == 0 || itab[i].ecode == error->error_code))
-			return 0;
+	for(i=nscreens; i < m; i++) {
+		screens[i] = emallocz(sizeof *screens[i]);
+		for(v=view; v; v=v->next)
+			view_init(v, i);
+	}
 
-	fprint(2, "%s: fatal error: Xrequest code=%d, Xerror code=%d\n",
-			argv0, error->request_code, error->error_code);
+	nscreens = m;
 
-	/* Try to cleanup, but only try once, in case we're called recursively. */
-	if(!dead++)
-		cleanup();
-	abort();
-	return xlib_errorhandler(display, error); /* calls exit() */
+	/* Reallocate buffers. */
+	freeimage(ibuf);
+	freeimage(ibuf32);
+	ibuf = allocimage(Dx(scr.rect), Dy(scr.rect), scr.depth);
+	ibuf32 = nil; /* Probably shouldn't do this until it's needed. */
+	if(render_visual)
+		ibuf32 = allocimage(Dx(scr.rect), Dy(scr.rect), 32);
+	disp.ibuf = ibuf;
+	disp.ibuf32 = ibuf32;
+
+	/* Resize and initialize screens. */
+	for(i=0; i < nscreens; i++) {
+		screen = screens[i];
+		screen->idx = i;
+
+		screen->showing = i < n;
+		if(screen->showing)
+			screen->r = rects[i];
+		else
+			screen->r = rectsetorigin(screen->r, scr.rect.max);
+		def.snap = Dy(screen->r) / 63;
+		bar_init(screens[i]);
+	}
+	screen = screens[0];
+	if(selview)
+		view_update(selview);
+}
+
+static void
+cleanup(void) {
+	while(client)
+		client_destroy(client);
+	ixp_server_close(&srv);
+	close(sleeperfd);
 }
 
 static void
@@ -250,44 +226,21 @@ cleanup_handler(int signal) {
 	sa.sa_handler = SIG_DFL;
 	sigaction(signal, &sa, nil);
 
-	srv.running = False;
+	srv.running = false;
 
 	switch(signal) {
+	case SIGTERM:
+		sa.sa_handler = cleanup_handler;
+		sigaction(SIGALRM, &sa, nil);
+		alarm(1);
 	default:
 		exitsignal = signal;
 		break;
+	case SIGALRM:
+		raise(SIGTERM);
 	case SIGINT:
 		break;
 	}
-}
-
-static void
-closeexec(int fd) {
-	fcntl(fd, F_SETFL, FD_CLOEXEC);
-}
-
-static int
-doublefork(void) {
-	pid_t pid;
-	int status;
-	
-	switch(pid=fork()) {
-	case -1:
-		fatal("Can't fork(): %r");
-	case 0:
-		switch(pid=fork()) {
-		case -1:
-			fatal("Can't fork(): %r");
-		case 0:
-			return 0;
-		default:
-			exit(0);
-		}
-	default:
-		waitpid(pid, &status, 0);
-		return pid;
-	}
-	return -1; /* not reached */
 }
 
 static void
@@ -303,7 +256,7 @@ init_traps(void) {
 		close(ConnectionNumber(display));
 		setsid();
 
-		display = XOpenDisplay(0);
+		display = XOpenDisplay(nil);
 		if(!display)
 			fatal("Can't open display");
 
@@ -339,9 +292,11 @@ spawn_command(const char *cmd) {
 		shell = passwd->pw_shell;
 		if(shell[0] != '/')
 			fatal("Shell is not an absolute path: %s", shell);
-
 		/* Run through the user's shell as a login shell */
 		p = smprint("-%s", strrchr(shell, '/') + 1);
+
+		close(0);
+		open("/dev/null", O_RDONLY);
 
 		execl(shell, p, "-c", cmd, nil);
 		fatal("Can't exec '%s': %r", cmd);
@@ -365,16 +320,21 @@ closedisplay(IxpConn *c) {
 
 int
 main(int argc, char *argv[]) {
-	char *wmiirc;
-	WMScreen *s;
-	WinAttr wa;
+	IxpMsg m;
+	char **oargv;
+	char *wmiirc, *s;
 	int i;
 
+	quotefmtinstall();
 	fmtinstall('r', errfmt);
+	fmtinstall('a', afmt);
 	fmtinstall('C', Cfmt);
+extern int fmtevent(Fmt*);
+	fmtinstall('E', fmtevent);
 
 	wmiirc = "wmiistartrc";
 
+	oargv = argv;
 	ARGBEGIN{
 	case 'a':
 		address = EARGF(usage());
@@ -385,6 +345,11 @@ main(int argc, char *argv[]) {
 	case 'v':
 		print("%s", version);
 		exit(0);
+	case 'D':
+		s = EARGF(usage());
+		m = ixp_message(s, strlen(s), 0);
+		msg_debug(&m);
+		break;
 	default:
 		usage();
 		break;
@@ -394,20 +359,15 @@ main(int argc, char *argv[]) {
 		usage();
 
 	setlocale(LC_CTYPE, "");
-	starting = True;
+	starting = true;
 
 	initdisplay();
-	closeexec(ConnectionNumber(display));
 
-	xlib_errorhandler = XSetErrorHandler(errorhandler);
-
-	check_other_wm = true;
-	XSelectInput(display, scr.root.w,
-			  SubstructureRedirectMask
-			| EnterWindowMask);
-	sync();
-
-	check_other_wm = false;
+	traperrors(true);
+	selectinput(&scr.root, EnterWindowMask
+			     | SubstructureRedirectMask);
+	if(traperrors(false))
+		fatal("another window manager is already running");
 
 	passwd = getpwuid(getuid());
 	user = estrdup(passwd->pw_name);
@@ -417,6 +377,7 @@ main(int argc, char *argv[]) {
 	sock = ixp_announce(address);
 	if(sock < 0)
 		fatal("Can't create socket '%s': %r", address);
+	closeexec(ConnectionNumber(display));
 	closeexec(sock);
 
 	if(wmiirc)
@@ -432,9 +393,10 @@ main(int argc, char *argv[]) {
 	ixp_listen(&srv, sock, &p9srv, serve_9pcon, nil);
 	ixp_listen(&srv, ConnectionNumber(display), nil, check_x_event, closedisplay);
 
-	def.font = loadfont(FONT);
 	def.border = 1;
-	def.colmode = Coldefault;
+	def.colmode = Colstack;
+	def.font = loadfont(FONT);
+	def.incmode = ISqueeze;
 
 	def.mod = Mod1Mask;
 	strcpy(def.grabmod, "Mod1");
@@ -442,29 +404,12 @@ main(int argc, char *argv[]) {
 	loadcolor(&def.focuscolor, FOCUSCOLORS);
 	loadcolor(&def.normcolor, NORMCOLORS);
 
-	num_screens = 1;
-	screens = emallocz(num_screens * sizeof(*screens));
-	screen = &screens[0];
-	for(i = 0; i < num_screens; i++) {
-		s = &screens[i];
-		init_screen(s);
+	disp.sel = pointerscreen();
 
-		s->ibuf = allocimage(Dx(s->r), Dy(s->r), scr.depth);
+	init_screens();
+	root_init();
 
-		wa.event_mask = 
-				  SubstructureRedirectMask
-				| SubstructureNotifyMask
-				| EnterWindowMask
-				| LeaveWindowMask
-				| FocusChangeMask;
-		wa.cursor = cursor[CurNormal];
-		setwinattr(&scr.root, &wa,
-				  CWEventMask
-				| CWCursor);
-		bar_init(s);
-	}
-
-	screen->focus = nil;
+	disp.focus = nil;
 	setfocus(screen->barwin, RevertToParent);
 	view_select("1");
 
@@ -474,17 +419,29 @@ main(int argc, char *argv[]) {
 	view_update_all();
 	ewmh_updateviews();
 
-	event("FocusTag %s\n", screen->sel->name);
+	event("FocusTag %s\n", selview->name);
 
 	i = ixp_serverloop(&srv);
 	if(i)
 		fprint(2, "%s: error: %r\n", argv0);
+	else
+		event("Quit");
 
 	cleanup();
 
 	if(exitsignal)
 		raise(exitsignal);
-	if(execstr)
-		execl("/bin/sh", "sh", "-c", execstr, nil);
+	if(execstr) {
+		char *toks[32];
+		int n;
+
+		n = unquote(strdup(execstr), toks, nelem(toks)-1);
+		toks[n] = nil;
+		execvp(toks[0], toks);
+		fprint(2, "%s: failed to exec %q: %r\n", argv0, execstr);
+		execvp(argv0, oargv);
+		fatal("failed to exec myself");
+	}
 	return i;
 }
+

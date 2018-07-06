@@ -23,28 +23,37 @@ typedef unsigned short		ushort;
 typedef unsigned int		uint;
 typedef unsigned long		ulong;
 typedef unsigned long long	uvlong;
-
 typedef long long	vlong;
 
+#ifdef VARARGCK
+# pragma varargck	argpos	_die	3
+# pragma varargck	argpos	fatal	1
+# pragma varargck	argpos	sxprint	1
+#endif
+
 #define strlcat wmii_strlcat
+#define strcasestr wmii_strcasestr
 /* util.c */
-void	_die(char*, int, char*);
+void	_die(char*, int, char*, ...);
 void*	emalloc(uint);
 void*	emallocz(uint);
 void*	erealloc(void*, uint);
 char*	estrdup(const char*);
+char*	estrndup(const char*, uint);
 void	fatal(const char*, ...);
 void*	freelater(void*);
 int	max(int, int);
 int	min(int, int);
 uint	strlcat(char*, const char*, uint);
+char*	strcasestr(const char*, const char*);
 char*	sxprint(const char*, ...);
-uint	tokenize(char **, uint, char*, char);
+uint	tokenize(char**, uint, char*, char);
+uint	stokenize(char**, uint, char*, char*);
 int	utflcpy(char*, const char*, int);
 char*	vsxprint(const char*, va_list);
 
-#define die(x) \
-	_die(__FILE__, __LINE__, x)
+#define die(...) \
+	_die(__FILE__, __LINE__, __VA_ARGS__)
 
 char *argv0;
 #undef ARGBEGIN
@@ -52,7 +61,7 @@ char *argv0;
 #undef ARGF
 #undef EARGF
 #define ARGBEGIN \
-		int _argtmp=0, _inargv=0; char *_argv=nil; \
+		int _argtmp=0, _inargv; char *_argv=nil; \
 		if(!argv0) argv0=*argv; argv++, argc--; \
 		_inargv=1; USED(_inargv); \
 		while(argc && argv[0][0] == '-') { \

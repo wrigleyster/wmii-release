@@ -1,4 +1,4 @@
-/* Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -7,23 +7,58 @@
 #include "fns.h"
 
 Client*
-area_selclient(Area *a) {               
+area_selclient(Area *a) {
 	if(a && a->sel)
 		return a->sel->client;
 	return nil;
 }
 
-uint
+int
 area_idx(Area *a) {
 	View *v;
 	Area *ap;
 	uint i;
 
 	v = a->view;
-	i = 0;
-	for(ap=v->area; a != ap; ap=ap->next)
+	if(a->floating)
+		return -1;
+	i = 1;
+	for(ap=v->areas[a->screen]; a != ap; ap=ap->next)
 		i++;
 	return i;
+}
+
+static Rectangle
+area_rect(void *v) {
+	Area *a;
+
+	a = v;
+	return a->r;
+}
+
+Area*
+area_find(View *v, Rectangle r, int dir, bool wrap) {
+	static Vector_ptr vec;
+	Area *a;
+	int s;
+
+	vec.n = 0;
+	foreach_column(v, s, a)
+		vector_ppush(&vec, a);
+
+	return findthing(r, dir, &vec, area_rect, wrap);
+}
+
+int
+afmt(Fmt *f) {
+	Area *a;
+
+	a = va_arg(f->args, Area*);
+	if(a == nil)
+		return fmtstrcpy(f, "<nil>");
+	if(a->floating)
+		return fmtstrcpy(f, "~");
+	return fmtprint(f, "%d", area_idx(a));
 }
 
 char*
@@ -37,68 +72,76 @@ area_name(Area *a) {
 }
 
 Area*
-area_create(View *v, Area *pos, uint w) {
+area_create(View *v, Area *pos, int scrn, uint width) {
 	static ushort id = 1;
-	uint areanum, i;
+	uint i;
 	uint minwidth;
-	int colnum;
+	int numcols;
 	Area *a;
 
-	minwidth = Dx(v->r)/NCOL;
+	assert(!pos || pos->screen == scrn);
+	SET(i);
+	if(v->areas) { /* Creating a column. */
+		minwidth = Dx(v->r[scrn])/NCOL;
+		i = pos ? area_idx(pos) : 1;
+		numcols = 0;
+		for(a=v->areas[scrn]; a; a=a->next)
+			numcols++;
 
-	i = 0;
-	if(pos)
-		i = area_idx(pos);
-	areanum = 0;
-	for(a=v->area; a; a=a->next)
-		areanum++;
-
-	colnum = areanum - 1;
-	if(w == 0) {
-		if(colnum >= 0) {
-			w = view_newcolw(v, i);
-			if (w == 0)
-				w = Dx(v->r) / (colnum + 1);
+		/* TODO: Need a better sizing/placing algorithm.
+		 */
+		if(width == 0) {
+			if(numcols >= 0) {
+				width = view_newcolwidth(v, i);
+				if (width == 0)
+					width = Dx(v->r[scrn]) / (numcols + 1);
+			}
+			else
+				width = Dx(v->r[scrn]);
 		}
-		else
-			w = Dx(v->r);
+
+		if(width < minwidth)
+			width = minwidth;
+		if(numcols && (numcols * minwidth + width) > Dx(v->r[scrn]))
+			return nil;
+
+		view_scale(v, scrn, Dx(v->r[scrn]) - width);
 	}
-
-	if(w < minwidth)
-		w = minwidth;
-	if(colnum && (colnum * minwidth + w) > Dx(v->r))
-		return nil;
-
-	if(pos)
-		view_scale(v, Dx(v->r) - w);
 
 	a = emallocz(sizeof *a);
 	a->view = v;
+	a->screen = scrn;
 	a->id = id++;
-	a->mode = def.colmode;
+	a->floating = !v->floating;
+	if(a->floating)
+		a->mode = Coldefault;
+	else
+		a->mode = def.colmode;
 	a->frame = nil;
 	a->sel = nil;
 
-	a->r = v->r;
+	a->r = v->r[scrn];
 	a->r.min.x = 0;
-	a->r.max.x = w;
+	a->r.max.x = width;
 
-	if(pos) {
+	if(a->floating) {
+		v->floating = a;
+		a->screen = -1;
+	}
+	else if(pos) {
 		a->next = pos->next;
 		a->prev = pos;
-	}else {
-		a->next = v->area;
-		v->area = a;
+	}
+	else {
+		a->next = v->areas[scrn];
+		v->areas[scrn] = a;
 	}
 	if(a->prev)
 		a->prev->next = a;
 	if(a->next)
 		a->next->prev = a;
 
-	if(a == v->area)
-		a->floating = True;
-
-	if(v->sel == nil)
+	if(v->sel == nil && !a->floating)
 		area_focus(a);
 
 	if(!a->floating)
@@ -108,7 +151,7 @@ area_create(View *v, Area *pos, uint w) {
 
 void
 area_destroy(Area *a) {
-	Area *ta;
+	Area *newfocus;
 	View *v;
 	int idx;
 
@@ -125,25 +168,28 @@ area_destroy(Area *a) {
 	idx = area_idx(a);
 
 	if(a->prev && !a->prev->floating)
-		ta = a->prev;
+		newfocus = a->prev;
 	else
-		ta = a->next;
+		newfocus = a->next;
 
 	/* Can only destroy the floating area when destroying a
 	 * view---after destroying all columns.
 	 */
-	assert(a->prev || a->next == nil);
+	assert(!a->floating || !v->areas[0]);
 	if(a->prev)
 		a->prev->next = a->next;
+	else if(!a->floating)
+		v->areas[a->screen] = a->next;
+	else
+		v->floating = nil;
 	if(a->next)
 		a->next->prev = a->prev;
 
-	if(ta && v->sel == a)
-		area_focus(ta);
+	if(newfocus && v->sel == a)
+		area_focus(newfocus);
+
 	view_arrange(v);
 	event("DestroyArea %d\n", idx);
-	/* Deprecated */
-	event("DestroyColumn %d\n", idx);
 
 	free(a);
 }
@@ -151,21 +197,24 @@ area_destroy(Area *a) {
 void
 area_moveto(Area *to, Frame *f) {
 	Area *from;
-	bool fromfloating;
 
 	assert(to->view == f->view);
 
+	if(f->client->fullscreen >= 0 && !to->floating)
+		return;
+
 	from = f->area;
-	fromfloating = from->floating;
+	if (from == to)
+		return;
 
 	area_detach(f);
 
 	/* Temporary kludge. */
 	if(!to->floating
-	&& to->floating != fromfloating
-	&& !eqrect(f->colr, ZR)) {
+	&& to->floating != from->floating
+	&& !eqrect(f->colr, ZR))
 		column_attachrect(to, f, f->colr);
-	}else
+	else
 		area_attach(to, f);
 }
 
@@ -174,6 +223,12 @@ area_setsel(Area *a, Frame *f) {
 	View *v;
 
 	v = a->view;
+	/* XXX: Stack. */
+	for(; f && f->collapsed && f->anext; f=f->anext)
+		;
+	for(; f && f->collapsed && f->aprev; f=f->aprev)
+		;
+
 	if(a == v->sel && f)
 		frame_focus(f);
 	else
@@ -191,8 +246,8 @@ area_attach(Area *a, Frame *f) {
 
 	view_arrange(a->view);
 
-	if(a->frame)
-		assert(a->sel);
+	if(btassert("4 full", a->frame && a->sel == nil))
+		a->sel = a->frame;
 }
 
 void
@@ -207,6 +262,10 @@ area_detach(Frame *f) {
 		float_detach(f);
 	else
 		column_detach(f);
+
+	if(v->sel->sel == nil && v->floating->sel)
+		v->sel = v->floating;
+
 	view_arrange(v);
 }
 
@@ -220,17 +279,23 @@ area_focus(Area *a) {
 	f = a->sel;
 	old_a = v->sel;
 
-	if(view_fullscreen_p(v) && !a->floating)
+	if(!a->floating && view_fullscreen_p(v, a->screen))
 		return;
 
 	v->sel = a;
+	/* XXX: Multihead. */
 	if(!a->floating)
 		v->selcol = area_idx(a);
+	if(a != old_a)
+		v->oldsel = nil;
 
-	if((old_a) && (a->floating != old_a->floating))
+	if((old_a) && (a->floating != old_a->floating)) {
 		v->revert = old_a;
+		if(v->floating->max)
+			view_update(v);
+	}
 
-	if(v != screen->sel)
+	if(v != selview)
 		return;
 
 	move_focus(old_a->sel, f);
@@ -241,7 +306,7 @@ area_focus(Area *a) {
 		client_focus(nil);
 
 	if(a != old_a) {
-		event("AreaFocus %s\n", area_name(a));
+		event("AreaFocus %a\n", a);
 		/* Deprecated */
 		if(a->floating)
 			event("FocusFloating\n");

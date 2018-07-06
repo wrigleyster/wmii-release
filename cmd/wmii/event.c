@@ -1,22 +1,53 @@
-/* Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
 #include <X11/keysym.h>
 #include "fns.h"
 
+typedef void (*EvHandler)(XEvent*);
+
 void
 dispatch_event(XEvent *e) {
-	Debug(DEvent)
-		printevent(e);
-	if(e->type < nelem(handler) && handler[e->type])
-		handler[e->type](e);
-	else
+	Dprint(DEvent, "%E\n", e);
+	if(e->type < nelem(handler)) {
+		if(handler[e->type])
+			handler[e->type](e);
+	}else
 		xext_event(e);
 }
 
 #define handle(w, fn, ev) \
 	BLOCK(if((w)->handler->fn) (w)->handler->fn((w), ev))
+
+static int
+findtime(Display *d, XEvent *e, XPointer v) {
+	Window *w;
+
+	w = (Window*)v;
+	if(e->type == PropertyNotify && e->xproperty.window == w->xid) {
+		xtime = e->xproperty.time;
+		return true;
+	}
+	return false;
+}
+
+void
+xtime_kludge(void) {
+	/* Round trip. */
+	static Window *w;
+	WinAttr wa;
+	XEvent e;
+	long l;
+
+	if(w == nil) {
+		w = createwindow(&scr.root, Rect(0, 0, 1, 1), 0, InputOnly, &wa, 0);
+		selectinput(w, PropertyChangeMask);
+	}
+	changeprop_long(w, "ATOM", "ATOM", &l, 0);
+	sync();
+	XIfEvent(display, &e, findtime, (void*)w);
+}
 
 uint
 flushevents(long event_mask, bool dispatch) {
@@ -35,14 +66,15 @@ static Bool
 findenter(Display *d, XEvent *e, XPointer v) {
 	long *l;
 
+	USED(d);
 	l = (long*)v;
 	if(*l)
-		return False;
+		return false;
 	if(e->type == EnterNotify)
-		return True;
+		return true;
 	if(e->type == MotionNotify)
 		(*l)++;
-	return False;
+	return false;
 }
 
 /* This isn't perfect. If there were motion events in the queue
@@ -63,21 +95,17 @@ flushenterevents(void) {
 }
 
 static void
-buttonrelease(XEvent *e) {
-	XButtonPressedEvent *ev;
+buttonrelease(XButtonPressedEvent *ev) {
 	Window *w;
 
-	ev = &e->xbutton;
 	if((w = findwin(ev->window)))
 		handle(w, bup, ev);
 }
 
 static void
-buttonpress(XEvent *e) {
-	XButtonPressedEvent *ev;
+buttonpress(XButtonPressedEvent *ev) {
 	Window *w;
 
-	ev = &e->xbutton;
 	if((w = findwin(ev->window)))
 		handle(w, bdown, ev);
 	else
@@ -85,12 +113,10 @@ buttonpress(XEvent *e) {
 }
 
 static void
-configurerequest(XEvent *e) {
-	XConfigureRequestEvent *ev;
+configurerequest(XConfigureRequestEvent *ev) {
 	XWindowChanges wc;
 	Window *w;
 
-	ev = &e->xconfigurerequest;
 	if((w = findwin(ev->window)))
 		handle(w, configreq, ev);
 	else{
@@ -106,10 +132,17 @@ configurerequest(XEvent *e) {
 }
 
 static void
-clientmessage(XEvent *e) {
-	XClientMessageEvent *ev;
+configurenotify(XConfigureEvent *ev) {
+	Window *w;
 
-	ev = &e->xclient;
+	ignoreenter = ev->serial;
+	if((w = findwin(ev->window)))
+		handle(w, config, ev);
+}
+
+static void
+clientmessage(XClientMessageEvent *ev) {
+
 	if(ewmh_clientmessage(ev))
 		return;
 	if(xdnd_clientmessage(ev))
@@ -117,70 +150,57 @@ clientmessage(XEvent *e) {
 }
 
 static void
-destroynotify(XEvent *e) {
-	XDestroyWindowEvent *ev;
+destroynotify(XDestroyWindowEvent *ev) {
 	Window *w;
 	Client *c;
 
-	ev = &e->xdestroywindow;
-	if((w = findwin(ev->window))) 
+	if((w = findwin(ev->window)))
 		handle(w, destroy, ev);
 	else {
-		Dprint(DGeneric, "DestroyWindow(%ux) (no handler)\n", (uint)ev->window);
 		if((c = win2client(ev->window)))
 			fprint(2, "Badness: Unhandled DestroyNotify: "
-				"Client: %p, Window: %W, Name: %s\n", c, &c->w, c->name);
+				  "Client: %p, Window: %W, Name: %s\n",
+				  c, &c->w, c->name);
 	}
 }
 
 static void
-enternotify(XEvent *e) {
-	XCrossingEvent *ev;
+enternotify(XCrossingEvent *ev) {
 	Window *w;
 
-	ev = &e->xcrossing;
 	xtime = ev->time;
 	if(ev->mode != NotifyNormal)
 		return;
 
-	if((w = findwin(ev->window))) 
+	if((w = findwin(ev->window)))
 		handle(w, enter, ev);
-	else if(ev->window == scr.root.w) {
-		sel_screen = True;
-		frame_draw_all();
-	}
 }
 
 static void
-leavenotify(XEvent *e) {
-	XCrossingEvent *ev;
+leavenotify(XCrossingEvent *ev) {
+	Window *w;
 
-	ev = &e->xcrossing;
 	xtime = ev->time;
-	if((ev->window == scr.root.w) && !ev->same_screen) {
-		sel_screen = True;
-		frame_draw_all();
-	}
+	if((w = findwin(ev->window)))
+		handle(w, leave, ev);
 }
 
 void
-print_focus(Client *c, const char *to) {
-	Dprint(DFocus, "screen->focus: %p[%C] => %p[%C]\n",
-			screen->focus, screen->focus, c, c);
-	Dprint(DFocus, "\t%s => %s\n", clientname(screen->focus), to);
+print_focus(const char *fn, Client *c, const char *to) {
+	Dprint(DFocus, "%s() disp.focus:\n", fn);
+	Dprint(DFocus, "\t%C => %C\n", disp.focus, c);
+	Dprint(DFocus, "\t%s => %s\n", clientname(disp.focus), to);
 }
 
 static void
-focusin(XEvent *e) {
-	XFocusChangeEvent *ev;
+focusin(XFocusChangeEvent *ev) {
 	Window *w;
 	Client *c;
 
-	ev = &e->xfocus;
 	/* Yes, we're focusing in on nothing, here. */
 	if(ev->detail == NotifyDetailNone) {
-		print_focus(&c_magic, "<magic[none]>");
-		screen->focus = &c_magic;
+		print_focus("focusin", &c_magic, "<magic[none]>");
+		disp.focus = &c_magic;
 		setfocus(screen->barwin, RevertToParent);
 		return;
 	}
@@ -191,22 +211,20 @@ focusin(XEvent *e) {
 	   ||(ev->detail == NotifyInferior)
 	   ||(ev->detail == NotifyAncestor)))
 		return;
-	if((ev->mode == NotifyWhileGrabbed) && (screen->hasgrab != &c_root))
+	if((ev->mode == NotifyWhileGrabbed) && (disp.hasgrab != &c_root))
 		return;
 
-	if(ev->window == screen->barwin->w) {
-		print_focus(nil, "<nil>");
-		screen->focus = nil;
+	if(ev->window == screen->barwin->xid) {
+		print_focus("focusin", nil, "<nil>");
+		disp.focus = nil;
 	}
-	else if((w = findwin(ev->window))) 
+	else if((w = findwin(ev->window)))
 		handle(w, focusin, ev);
 	else if(ev->mode == NotifyGrab) {
-		if(ev->window == scr.root.w)
-			screen->hasgrab = &c_root;
 		/* Some unmanaged window has grabbed focus */
-		else if((c = screen->focus)) {
-			print_focus(&c_magic, "<magic>");
-			screen->focus = &c_magic;
+		if((c = disp.focus)) {
+			print_focus("focusin", &c_magic, "<magic>");
+			disp.focus = &c_magic;
 			if(c->sel)
 				frame_draw(c->sel);
 		}
@@ -214,12 +232,10 @@ focusin(XEvent *e) {
 }
 
 static void
-focusout(XEvent *e) {
+focusout(XFocusChangeEvent *ev) {
 	XEvent me;
-	XFocusChangeEvent *ev;
 	Window *w;
 
-	ev = &e->xfocus;
 	if(!((ev->detail == NotifyNonlinear)
 	   ||(ev->detail == NotifyNonlinearVirtual)
 	   ||(ev->detail == NotifyVirtual)
@@ -227,138 +243,117 @@ focusout(XEvent *e) {
 	   ||(ev->detail == NotifyAncestor)))
 		return;
 	if(ev->mode == NotifyUngrab)
-		screen->hasgrab = nil;
+		disp.hasgrab = nil;
 
 	if((ev->mode == NotifyGrab)
 	&& XCheckMaskEvent(display, KeyPressMask, &me))
-			dispatch_event(&me);
-	else if((w = findwin(ev->window))) 
+		dispatch_event(&me);
+	else if((w = findwin(ev->window)))
 		handle(w, focusout, ev);
 }
 
 static void
-expose(XEvent *e) {
-	XExposeEvent *ev;
+expose(XExposeEvent *ev) {
 	Window *w;
 
-	ev = &e->xexpose;
-	if(ev->count == 0) {
-		if((w = findwin(ev->window))) 
+	if(ev->count == 0)
+		if((w = findwin(ev->window)))
 			handle(w, expose, ev);
-	}
 }
 
 static void
-keypress(XEvent *e) {
-	XKeyEvent *ev;
+keypress(XKeyEvent *ev) {
+	Window *w;
 
-	ev = &e->xkey;
 	xtime = ev->time;
-	ev->state &= valid_mask;
-	if(ev->window == scr.root.w)
-		kpress(scr.root.w, ev->state, (KeyCode) ev->keycode);
+	if((w = findwin(ev->window)))
+		handle(w, kdown, ev);
 }
 
 static void
-mappingnotify(XEvent *e) {
-	XMappingEvent *ev;
+mappingnotify(XMappingEvent *ev) {
 
-	ev = &e->xmapping;
 	XRefreshKeyboardMapping(ev);
 	if(ev->request == MappingKeyboard)
 		update_keys();
 }
 
 static void
-maprequest(XEvent *e) {
-	XMapRequestEvent *ev;
-	XWindowAttributes wa;
+maprequest(XMapRequestEvent *ev) {
+	Window *w;
 
-	ev = &e->xmaprequest;
-	if(!XGetWindowAttributes(display, ev->window, &wa))
-		return;
-	if(wa.override_redirect) {
-		/* Do I really want these? */
-		XSelectInput(display, ev->window,
-			(StructureNotifyMask | PropertyChangeMask));
-		return;
-	}
-	if(!win2client(ev->window))
-		client_create(ev->window, &wa);
+	if((w = findwin(ev->parent)))
+		handle(w, mapreq, ev);
 }
 
 static void
-motionnotify(XEvent *e) {
-	XMotionEvent *ev;
+motionnotify(XMotionEvent *ev) {
 	Window *w;
 
-	ev = &e->xmotion;
 	xtime = ev->time;
 	if((w = findwin(ev->window)))
 		handle(w, motion, ev);
 }
 
 static void
-propertynotify(XEvent *e) {
-	XPropertyEvent *ev;
+propertynotify(XPropertyEvent *ev) {
 	Window *w;
 
-	ev = &e->xproperty;
 	xtime = ev->time;
-	if((w = findwin(ev->window))) 
+	if((w = findwin(ev->window)))
 		handle(w, property, ev);
 }
 
 static void
-mapnotify(XEvent *e) {
-	XMapEvent *ev;
+mapnotify(XMapEvent *ev) {
 	Window *w;
 
-	ev = &e->xmap;
-	if((w = findwin(ev->window))) 
+	ignoreenter = ev->serial;
+	if((w = findwin(ev->window)))
 		handle(w, map, ev);
 }
 
 static void
-unmapnotify(XEvent *e) {
-	XUnmapEvent *ev;
+unmapnotify(XUnmapEvent *ev) {
 	Window *w;
 
-	ev = &e->xunmap;
-	if((w = findwin(ev->window)) && (ev->event == w->parent->w)) {
+	ignoreenter = ev->serial;
+	if((w = findwin(ev->window)) && (ev->event == w->parent->xid)) {
+		w->mapped = false;
 		if(ev->send_event || w->unmapped-- == 0)
 			handle(w, unmap, ev);
 	}
 }
 
-void (*handler[LASTEvent]) (XEvent *) = {
-	[ButtonPress] = buttonpress,
-	[ButtonRelease] = buttonrelease,
-	[ConfigureRequest] = configurerequest,
-	[ClientMessage] = clientmessage,
-	[DestroyNotify] = destroynotify,
-	[EnterNotify] = enternotify,
-	[Expose] = expose,
-	[FocusIn] = focusin,
-	[FocusOut] = focusout,
-	[KeyPress] = keypress,
-	[LeaveNotify] = leavenotify,
-	[MapNotify] = mapnotify,
-	[MapRequest] = maprequest,
-	[MappingNotify] = mappingnotify,
-	[MotionNotify] = motionnotify,
-	[PropertyNotify] = propertynotify,
-	[UnmapNotify] = unmapnotify,
+EvHandler handler[LASTEvent] = {
+	[ButtonPress] =		(EvHandler)buttonpress,
+	[ButtonRelease] =	(EvHandler)buttonrelease,
+	[ConfigureRequest] =	(EvHandler)configurerequest,
+	[ConfigureNotify] =	(EvHandler)configurenotify,
+	[ClientMessage] =	(EvHandler)clientmessage,
+	[DestroyNotify] =	(EvHandler)destroynotify,
+	[EnterNotify] =		(EvHandler)enternotify,
+	[Expose] =		(EvHandler)expose,
+	[FocusIn] =		(EvHandler)focusin,
+	[FocusOut] =		(EvHandler)focusout,
+	[KeyPress] =		(EvHandler)keypress,
+	[LeaveNotify] =		(EvHandler)leavenotify,
+	[MapNotify] =		(EvHandler)mapnotify,
+	[MapRequest] =		(EvHandler)maprequest,
+	[MappingNotify] =	(EvHandler)mappingnotify,
+	[MotionNotify] =	(EvHandler)motionnotify,
+	[PropertyNotify] =	(EvHandler)propertynotify,
+	[UnmapNotify] =		(EvHandler)unmapnotify,
 };
 
 void
 check_x_event(IxpConn *c) {
 	XEvent ev;
-	
-	USED(c);
 
+	USED(c);
 	while(XPending(display)) {
 		XNextEvent(display, &ev);
 		dispatch_event(&ev);
 	}
 }
+

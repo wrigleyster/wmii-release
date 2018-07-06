@@ -4,7 +4,8 @@ include $(ROOT)/mk/wmii.mk
 
 wmiir.c: $(ROOT)/mk/wmii.mk
 
-DIRS =	wmii
+DIRS =	wmii \
+	menu
 TARG =	wihack    \
 	wmii.rc   \
 	wmii.sh   \
@@ -18,6 +19,7 @@ FILTER = sed "s|CONFPREFIX|$(ETC)|g; \
 	      s|CONFVERSION|$(CONFVERSION)|g; \
 	      s|P9PATHS|$(P9PATHS)|g; \
 	      s|LIBDIR|$(LIBDIR)|g; \
+	      s|BINSH|$(BINSH)|g; \
 	      s|AWKPATH|$(AWKPATH)|g"
 
 LDFLAGS += -lfmt -lutf
@@ -30,10 +32,10 @@ OWMIIR=wmiir.o $(OFILES) $(LIBIXP)
 wmiir.O: $(OWMIIR)
 	$(LINK) $@ $(STATIC) $(OWMIIR)
 
-OMENU=menu.o wmii/x11.o $(OFILES) $(LIBIXP)
-menu.O: $(OMENU) dall
-	$(LINK) $@ $(OMENU)
+wmii/x11.o wmii/map.o: dall
+	true
 
-wmii9menu.O: wmii9menu.o $(OFILES)
-	$(LINK) $@ $*.o $(OFILES) $(LIBX11)
+O9MENU=wmii9menu.o clientutil.o wmii/x11.o wmii/map.o $(OFILES) $(LIBIXP)
+wmii9menu.O: $(O9MENU)
+	$(LINK) $@ $(O9MENU) $$(pkg-config --libs $(X11PACKAGES)) -lXext -lbio
 

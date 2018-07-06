@@ -3,44 +3,37 @@
  */
 #include "hack.h"
 #include <dlfcn.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "util.c"
 #include "x11.c"
 
 enum {
-	Timeout = 10000,
+	Timeout = 10,
 };
 
 static void*	xlib;
 
+static long	lastwin;
 static long	transient;
 static Atom	types[32];
 static long	ntypes;
-static char*	tags[32];
-static long	ntags;
+static char**	tags;
 static long	pid;
 static long	stime;
 static char	hostname[256];
-static long	nmsec;
+static long	nsec;
 
 typedef Window (*mapfn)(Display*, Window);
 
 static Window (*mapwindow)(Display*, Window);
 static Window (*mapraised)(Display*, Window);
-
-static long
-msec(void) {
-	struct timeval tv;
-
-	if(!gettimeofday(&tv, 0))
-		return 0;
-	return tv.tv_sec*1000 + tv.tv_usec/1000;
-}
 
 static void
 init(Display *d) { /* Hrm... assumes one display... */
@@ -73,7 +66,7 @@ init(Display *d) { /* Hrm... assumes one display... */
 					*p += 'A' - 'a';
 			toks[i] = smprint("_NET_WM_WINDOW_TYPE_%s", toks[i]);
 		}
-		XInternAtoms(d, toks, n, False, types);
+		XInternAtoms(d, toks, n, false, types);
 		ntypes = n;
 		for(i=0; i < n; i++)
 			free(toks[i]);
@@ -84,9 +77,7 @@ init(Display *d) { /* Hrm... assumes one display... */
 		unsetenv("WMII_HACK_TAGS");
 
 		n = tokenize(toks, nelem(toks)-1, s, '+');
-		for(i=0; i < n; i++)
-			tags[i] = strdup(toks[i]);
-		ntags = n;
+		tags = strlistdup(toks, n);
 		free(s);
 	}
 	if((s = getenv("WMII_HACK_TIME"))) {
@@ -96,6 +87,12 @@ init(Display *d) { /* Hrm... assumes one display... */
 
 	pid = getpid();
 	gethostname(hostname, sizeof hostname);
+}
+
+static int /* Temporary Xlib error handler */
+ignoreerrors(Display *d, XErrorEvent *e) {
+	//USED(d, e);
+	return 0;
 }
 
 static void
@@ -113,16 +110,16 @@ setprops(Display *d, Window w) {
 	}
 
 	/* Kludge. */
-	if(nmsec == 0)
-		nmsec = msec();
-	if(msec() > nmsec + Timeout)
+	if(nsec == 0)
+		nsec = time(0);
+	else if(time(0) > nsec + Timeout)
 		return;
 
 	if(transient)
 		changeprop_long(d, w, "WM_TRANSIENT_FOR", "WINDOW", &transient, 1);
 	if(ntypes)
 		changeprop_long(d, w, "_NET_WM_WINDOW_TYPE", "ATOM", (long*)types, ntypes);
-	if(ntags)
+	if(tags)
 		changeprop_textlist(d, w, "_WMII_TAGS", "UTF8_STRING", tags);
 	if(stime)
 		changeprop_long(d, w, "_WMII_LAUNCH_TIME", "CARDINAL", &stime, 1);

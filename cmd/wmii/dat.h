@@ -26,6 +26,22 @@ enum {
 };
 
 enum {
+	CLeft = 1<<0,
+	CCenter = 1<<1,
+	CRight = 1<<2,
+};
+
+enum IncMode {
+	IIgnore,
+	IShow,
+	ISqueeze,
+};
+
+enum {
+	GInvert = 1<<0,
+};
+
+enum {
 	UrgManager,
 	UrgClient,
 };
@@ -42,13 +58,15 @@ enum EWMHType {
 };
 
 enum {
-	Coldefault, Colstack, Colmax,
+	Coldefault, Colstack, Colmax, Collast
 };
 
+extern char*	modes[];
+
 #define TOGGLE(x) \
-	(x == On ? "On" : \
-	 x == Off ? "Off" : \
-	 x == Toggle ? "Toggle" : \
+	(x == On ? "on" : \
+	 x == Off ? "off" : \
+	 x == Toggle ? "toggle" : \
 	 "<toggle>")
 enum {
 	Off,
@@ -56,10 +74,16 @@ enum {
 	Toggle,
 };
 
+enum Barpos {
+	BBottom,
+	BTop,
+};
+
 enum {
 	CurNormal,
 	CurNECorner, CurNWCorner, CurSECorner, CurSWCorner,
-	CurDHArrow, CurMove, CurInput, CurSizing, CurIcon,
+	CurDHArrow, CurDVArrow, CurMove, CurInput, CurSizing,
+	CurTCross, CurIcon,
 	CurNone,
 	CurLast,
 };
@@ -80,7 +104,8 @@ enum DebugOpt {
 	DEwmh	= 1<<2,
 	DFocus	= 1<<3,
 	DGeneric= 1<<4,
-	NDebugOpt = 5,
+	DStack  = 1<<5,
+	NDebugOpt = 6,
 };
 
 /* Data Structures */
@@ -93,6 +118,7 @@ typedef struct Group Group;
 typedef struct Key Key;
 typedef struct Map Map;
 typedef struct MapEnt MapEnt;
+typedef struct Regex Regex;
 typedef struct Rule Rule;
 typedef struct Ruleset Ruleset;
 typedef struct Strut Strut;
@@ -103,13 +129,17 @@ struct Area {
 	Area*	next;
 	Area*	prev;
 	Frame*	frame;
+	Frame*	frame_old;
 	Frame*	stack;
 	Frame*	sel;
 	View*	view;
 	bool	floating;
 	ushort	id;
 	int	mode;
+	int	screen;
+	bool	max;
 	Rectangle	r;
+	Rectangle	r_old;
 };
 
 struct Bar {
@@ -120,8 +150,14 @@ struct Bar {
 	char	name[256];
 	int	bar;
 	ushort	id;
-	Rectangle r;
 	CTuple	col;
+	Rectangle	r;
+	WMScreen*	screen;
+};
+
+struct Regex {
+	char*	regex;
+	Reprog*	regc;
 };
 
 struct Client {
@@ -130,30 +166,37 @@ struct Client {
 	Frame*	sel;
 	Window	w;
 	Window*	framewin;
+	Image**	ibuf;
 	XWindow	trans;
+	Regex	tagre;
+	Regex	tagvre;
 	Group*	group;
 	Strut*	strut;
 	Cursor	cursor;
 	Rectangle r;
+	char**	retags;
 	char	name[256];
 	char	tags[256];
 	char	props[512];
-	uint	border;
 	long	proto;
+	uint	border;
+	int	fullscreen;
+	int	unmapped;
 	char	floating;
 	char	fixedsize;
-	char	fullscreen;
 	char	urgent;
 	char	borderless;
 	char	titleless;
 	char	noinput;
-	int	unmapped;
 };
 
 struct Divide {
 	Divide*	next;
 	Window*	w;
+	Area*	left;
+	Area*	right;
 	bool	mapped;
+	int	side;
 	int	x;
 };
 
@@ -161,6 +204,7 @@ struct Frame {
 	Frame*	cnext;
 	Frame*	anext;
 	Frame*	aprev;
+	Frame*	anext_old;
 	Frame*	snext;
 	Frame*	sprev;
 	Client*	client;
@@ -170,9 +214,10 @@ struct Frame {
 	int	column;
 	ushort	id;
 	bool	collapsed;
-	float	ratio;
+	int	dy;
 	Rectangle	r;
 	Rectangle	colr;
+	Rectangle	colr_old;
 	Rectangle	floatr;
 	Rectangle	crect;
 	Rectangle	grabbox;
@@ -201,17 +246,11 @@ struct Map {
 	uint	nhash;
 };
 
-struct MapEnt {
-	ulong		hash;
-	const char*	key;
-	void*		val;
-	MapEnt*		next;
-};
-
 struct Rule {
 	Rule*	next;
 	Reprog*	regex;
 	char	value[256];
+
 };
 
 struct Ruleset {
@@ -227,16 +266,20 @@ struct Strut {
 	Rectangle	bottom;
 };
 
+#define firstarea areas[screen->idx]
+#define screenr r[screen->idx]
 struct View {
 	View*	next;
 	char	name[256];
 	ushort	id;
-	Area*	area;
+	Area*	floating;
+	Area**	areas;
 	Area*	sel;
 	Area*	oldsel;
 	Area*	revert;
 	int	selcol;
-	Rectangle r;
+	bool	dead;
+	Rectangle *r;
 };
 
 /* Yuck. */
@@ -253,6 +296,7 @@ void	vector_##c##push(Vector_##nam*, type); \
 
 VECTOR(long, long, l)
 VECTOR(Rectangle, rect, r)
+VECTOR(void*, ptr, p)
 #undef  VECTOR
 
 #ifndef EXTERN
@@ -273,6 +317,7 @@ EXTERN struct {
 	uint	border;
 	uint	snap;
 	int	colmode;
+	int	incmode;
 } def;
 
 enum {
@@ -283,18 +328,27 @@ enum {
 
 EXTERN struct WMScreen {
 	Bar*	bar[2];
-	View*	sel;
-	Client*	focus;
-	Client*	hasgrab;
 	Window*	barwin;
-	Image*	ibuf;
+	bool	showing;
+	int	barpos;
+	int	idx;
 
 	Rectangle r;
 	Rectangle brect;
-} *screens, *screen;
+} **screens, *screen;
+EXTERN uint	nscreens;
+
+EXTERN struct {
+	Client*	focus;
+	Client*	hasgrab;
+	Image*	ibuf;
+	Image*	ibuf32;
+	bool	sel;
+} disp;
 
 EXTERN Client*	client;
 EXTERN View*	view;
+EXTERN View*	selview;
 EXTERN Key*	key;
 EXTERN Divide*	divs;
 EXTERN Client	c_magic;
@@ -316,10 +370,10 @@ EXTERN IxpServer srv;
 EXTERN Ixp9Srv	p9srv;
 
 /* X11 */
-EXTERN uint	num_screens;
 EXTERN uint	valid_mask;
 EXTERN uint	numlock_mask;
-EXTERN bool	sel_screen;
+EXTERN Image*	ibuf;
+EXTERN Image*	ibuf32;
 
 EXTERN Cursor	cursor[CurLast];
 
@@ -328,14 +382,19 @@ EXTERN XHandler handler[LASTEvent];
 
 /* Misc */
 EXTERN bool	starting;
+EXTERN bool	resizing;
+EXTERN long	ignoreenter;
 EXTERN char*	user;
 EXTERN char*	execstr;
 EXTERN int	debugflag;
 EXTERN int	debugfile;
 EXTERN long	xtime;
+EXTERN Visual*	render_visual;
+
+EXTERN Client*	kludge;
 
 extern char*	debugtab[];
 
-#define Debug(x) if((debugflag|debugfile)&(x) && setdebug(x))
-#define Dprint(x, ...) BLOCK( debug(x, __VA_ARGS__) )
+#define Debug(x) if(((debugflag|debugfile)&(x)) && setdebug(x))
+#define Dprint(x, ...) BLOCK( if((debugflag|debugfile)&(x)) debug(x, __VA_ARGS__) )
 

@@ -12,13 +12,12 @@ trim(char *str, const char *chars) {
 	char c;
 
 	q = str;
-	for(p = str; *p; p++) {
-		for(cp = chars; (c = *cp); cp++)
+	for(p=str; *p; p++) {
+		for(cp=chars; (c = *cp); cp++)
 			if(*p == c)
-				goto nextchar;
-		*q++ = *p;
-	nextchar:
-		continue;
+				break;
+		if(c == '\0')
+			*q++ = *p;
 	}
 	*q = '\0';
 }
@@ -91,7 +90,7 @@ update_rules(Rule **rule, const char *data) {
 				*rule = emallocz(sizeof **rule);
 				(*rule)->regex = regcomp(regex);
 				if((*rule)->regex) {
-					utflcpy((*rule)->value, value, sizeof(rul->value));
+					utflcpy((*rule)->value, value, sizeof rul->value);
 					rule = &(*rule)->next;
 				}else
 					free(*rule);

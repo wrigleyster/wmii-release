@@ -1,4 +1,4 @@
-/* Copyright ©2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2008-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -26,7 +26,7 @@ xdnd_clientmessage(XClientMessageEvent *e) {
 	Rectangle r;
 	Point p;
 	long pos, siz;
-	int msg;
+	ulong msg;
 
 	dnd = nil;
 	msg = e->message_type;

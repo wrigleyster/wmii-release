@@ -7,16 +7,14 @@
 #include <sys/types.h>
 #include <sys/select.h>
 
-#define IXP_API 86
+#define IXP_API 105
 
 /* Gunk */
-#ifdef IXP_NEEDAPI
-# if IXP_API < IXP_NEEDAPI
-#   error A newer version of libixp is needed for this compilation.
-# elif IXP_API > IXP_NEEDAPI && \
-       (defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(KENC))
-#   warning This version of libixp has a newer API than this compilation suggests.
-# endif
+#if defined(IXP_NEEDAPI) && IXP_API < IXP_NEEDAPI
+#  error A newer version of libixp is needed for this compilation.
+#endif
+#if defined(IXP_MAXAPI) && IXP_API > IXP_MAXAPI
+#  warning This version of libixp has a newer API than this compilation requires.
 #endif
 
 #undef	uchar
@@ -35,10 +33,11 @@
 #ifdef KENC
 #  define STRUCT(x) struct {x};
 #  define UNION(x) union {x};
-#elif defined(__GNUC__) && !defined(IXPlint)
+#elif defined(__GNUC__)
 #  define STRUCT(x) __extension__ struct {x};
 #  define UNION(x) __extension__ union {x};
 #else
+#  define IXP_NEEDAPI 89
 #  define STRUCT(x) x
 #  define UNION(x) x
 #endif
@@ -224,7 +223,6 @@ typedef struct Ixp9Srv Ixp9Srv;
 typedef struct IxpCFid IxpCFid;
 typedef struct IxpClient IxpClient;
 typedef struct IxpConn IxpConn;
-typedef struct IxpFcall IxpFcall;
 typedef struct IxpFid IxpFid;
 typedef struct IxpMsg IxpMsg;
 typedef struct IxpQid IxpQid;
@@ -273,7 +271,113 @@ struct IxpQid {
 	uchar	dir_type;
 };
 
+/* stat structure */
+struct IxpStat {
+	ushort	type;
+	ulong	dev;
+	IxpQid	qid;
+	ulong	mode;
+	ulong	atime;
+	ulong	mtime;
+	uvlong	length;
+	char*	name;
+	char*	uid;
+	char*	gid;
+	char*	muid;
+};
+
+typedef struct IxpFHdr		IxpFHdr;
+typedef struct IxpFError	IxpFError;
+typedef struct IxpFROpen	IxpFRAttach;
+typedef struct IxpFRAuth	IxpFRAuth;
+typedef struct IxpFROpen	IxpFRCreate;
+typedef struct IxpFROpen	IxpFROpen;
+typedef struct IxpFIO		IxpFRRead;
+typedef struct IxpFRStat	IxpFRStat;
+typedef struct IxpFVersion	IxpFRVersion;
+typedef struct IxpFRWalk	IxpFRWalk;
+typedef struct IxpFAttach	IxpFTAttach;
+typedef struct IxpFAttach	IxpFTAuth;
+typedef struct IxpFTCreate	IxpFTCreate;
+typedef struct IxpFTFlush	IxpFTFlush;
+typedef struct IxpFTCreate	IxpFTOpen;
+typedef struct IxpFIO		IxpFTRead;
+typedef struct IxpFVersion	IxpFTVersion;
+typedef struct IxpFTWalk	IxpFTWalk;
+typedef struct IxpFIO		IxpFTWrite;
+typedef struct IxpFTWStat	IxpFTWStat;
+typedef struct IxpFAttach	IxpFAttach;
+typedef struct IxpFIO		IxpFIO;
+typedef struct IxpFVersion	IxpFVersion;
+
+struct IxpFHdr {
+	uchar type;
+	ushort tag;
+	ulong fid;
+};
+struct IxpFVersion {
+	IxpFHdr	hdr;
+	ulong	msize;
+	char*	version;
+};
+struct IxpFTFlush {
+	IxpFHdr	hdr;
+	ushort	oldtag;
+};
+struct IxpFError {
+	IxpFHdr	hdr;
+	char*	ename;
+};
+struct IxpFROpen {
+	IxpFHdr	hdr;
+	IxpQid	qid; /* +Rattach */
+	ulong	iounit;
+};
+struct IxpFRAuth {
+	IxpFHdr	hdr;
+	IxpQid	aqid;
+};
+struct IxpFAttach {
+	IxpFHdr	hdr;
+	ulong	afid;
+	char*	uname;
+	char*	aname;
+};
+struct IxpFTCreate {
+	IxpFHdr	hdr;
+	ulong	perm;
+	char*	name;
+	uchar	mode; /* +Topen */
+};
+struct IxpFTWalk {
+	IxpFHdr	hdr;
+	ulong	newfid;
+	ushort	nwname;
+	char*	wname[IXP_MAX_WELEM];
+};
+struct IxpFRWalk {
+	IxpFHdr	hdr;
+	ushort	nwqid;
+	IxpQid	wqid[IXP_MAX_WELEM];
+};
+struct IxpFIO {
+	IxpFHdr	hdr;
+	uvlong	offset; /* Tread, Twrite */
+	ulong	count; /* Tread, Twrite, Rread */
+	char*	data; /* Twrite, Rread */
+};
+struct IxpFRStat {
+	IxpFHdr	hdr;
+	ushort	nstat;
+	uchar*	stat;
+};
+struct IxpFTWStat {
+	IxpFHdr	hdr;
+	IxpStat	stat;
+};
+#if defined(IXP_NEEDAPI) && IXP_NEEDAPI <= 89
 /* from fcall(3) in plan9port */
+typedef struct IxpFcall IxpFcall;
 struct IxpFcall {
 	uchar type;
 	ushort tag;
@@ -321,27 +425,43 @@ struct IxpFcall {
 			ulong	count; /* Tread, Twrite, Rread */
 			char	*data; /* Twrite, Rread */
 		)
-		STRUCT ( /* Twstat, Rstat */
+		STRUCT ( /* Rstat */
 			ushort	nstat;
 			uchar	*stat;
 		)
+		STRUCT ( /* Twstat */
+			IxpStat	st;
+		)
 	)
 };
-
-/* stat structure */
-struct IxpStat {
-	ushort	type;
-	ulong	dev;
-	IxpQid	qid;
-	ulong	mode;
-	ulong	atime;
-	ulong	mtime;
-	uvlong	length;
-	char*	name;
-	char*	uid;
-	char*	gid;
-	char*	muid;
+#else
+typedef union IxpFcall		IxpFcall;
+union IxpFcall {
+	IxpFHdr		hdr;
+	IxpFVersion	version;
+	IxpFVersion	tversion;
+	IxpFVersion	rversion;
+	IxpFTFlush	tflush;
+	IxpFROpen	ropen;
+	IxpFROpen	rcreate;
+	IxpFROpen	rattach;
+	IxpFError	error;
+	IxpFRAuth	rauth;
+	IxpFAttach	tattach;
+	IxpFAttach	tauth;
+	IxpFTCreate	tcreate;
+	IxpFTCreate	topen;
+	IxpFTWalk	twalk;
+	IxpFRWalk	rwalk;
+	IxpFTWStat	twstat;
+	IxpFRStat	rstat;
+	IxpFIO		twrite;
+	IxpFIO		rwrite;
+	IxpFIO		tread;
+	IxpFIO		rread;
+	IxpFIO		io;
 };
+#endif
 
 struct IxpConn {
 	IxpServer*	srv;
@@ -451,6 +571,7 @@ struct Ixp9Srv {
 	void (*stat)(Ixp9Req *r);
 	void (*walk)(Ixp9Req *r);
 	void (*write)(Ixp9Req *r);
+	void (*wstat)(Ixp9Req *r);
 	void (*freefid)(IxpFid *f);
 };
 
@@ -486,6 +607,7 @@ struct IxpThread {
 extern IxpThread *ixp_thread;
 extern int (*ixp_vsnprint)(char*, int, const char*, va_list);
 extern char* (*ixp_vsmprint)(const char*, va_list);
+extern void (*ixp_printfcall)(IxpFcall*);
 
 /* thread_*.c */
 int ixp_taskinit(void);
@@ -500,7 +622,6 @@ int ixp_pthread_init(void);
 
 /* client.c */
 int		ixp_close(IxpCFid*);
-Stat*		ixp_fstat(IxpCFid*);
 long		ixp_pread(IxpCFid*, void*, long, vlong);
 int		ixp_print(IxpCFid*, const char*, ...);
 long		ixp_pwrite(IxpCFid*, const void*, long, vlong);
@@ -510,8 +631,10 @@ void		ixp_unmount(IxpClient*);
 int		ixp_vprint(IxpCFid*, const char*, va_list);
 long		ixp_write(IxpCFid*, const void*, long);
 IxpCFid*	ixp_create(IxpClient*, const char*, uint perm, uchar mode);
-IxpClient*	ixp_mount(char*);
+IxpStat*	ixp_fstat(IxpCFid*);
+IxpClient*	ixp_mount(const char*);
 IxpClient*	ixp_mountfd(int);
+IxpClient*	ixp_nsmount(const char*);
 IxpCFid*	ixp_open(IxpClient*, const char*, uchar);
 IxpStat*	ixp_stat(IxpClient*, const char*);
 
@@ -568,11 +691,14 @@ long	ixp_settimer(IxpServer*, long, void (*)(long, void*), void*);
 int	ixp_unsettimer(IxpServer*, long);
 
 /* util.c */
+void	ixp_cleanname(char*);
 void*	ixp_emalloc(uint);
 void*	ixp_emallocz(uint);
+void	ixp_eprint(const char*, ...);
 void*	ixp_erealloc(void*, uint);
 char*	ixp_estrdup(const char*);
-void	ixp_eprint(const char*, ...);
-uint	ixp_tokenize(char**, uint len, char*, char);
+char*	ixp_namespace(void);
+char*	ixp_smprint(const char*, ...);
 uint	ixp_strlcat(char*, const char*, uint);
+uint	ixp_tokenize(char**, uint len, char*, char);
 

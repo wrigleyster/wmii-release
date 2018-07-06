@@ -1,4 +1,4 @@
-/* Copyright ©2007-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2007-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -7,10 +7,13 @@
 
 Window *ewmhwin;
 
+static void	ewmh_getwinstate(Client*);
+static void	ewmh_setstate(Client*, Atom, int);
+
 #define Net(x) ("_NET_" x)
-#define	Action(x) ("_NET_WM_ACTION_" x)
-#define	State(x) ("_NET_WM_STATE_" x)
-#define	Type(x) ("_NET_WM_WINDOW_TYPE_" x)
+#define	Action(x) Net("WM_ACTION_" x)
+#define	State(x) Net("WM_STATE_" x)
+#define	Type(x) Net("WM_WINDOW_TYPE_" x)
 #define NET(x) xatom(Net(x))
 #define	ACTION(x) xatom(Action(x))
 #define	STATE(x) xatom(State(x))
@@ -20,18 +23,20 @@ void
 ewmh_init(void) {
 	WinAttr wa;
 	char myname[] = "wmii";
-	long win[1];
+	long win;
 
 	ewmhwin = createwindow(&scr.root,
 		Rect(0, 0, 1, 1), 0 /*depth*/,
 		InputOnly, &wa, 0);
 
-	win[0] = ewmhwin->w;
-	changeprop_long(&scr.root, Net("SUPPORTING_WM_CHECK"), "WINDOW", win, 1);
-	changeprop_long(ewmhwin, Net("SUPPORTING_WM_CHECK"), "WINDOW", win, 1);
+	win = ewmhwin->xid;
+	changeprop_long(&scr.root, Net("SUPPORTING_WM_CHECK"), "WINDOW", &win, 1);
+	changeprop_long(ewmhwin, Net("SUPPORTING_WM_CHECK"), "WINDOW", &win, 1);
 	changeprop_string(ewmhwin, Net("WM_NAME"), myname);
+
+	long zz[] = {0, 0};
 	changeprop_long(&scr.root, Net("DESKTOP_VIEWPORT"), "CARDINAL",
-		(long[]){0, 0}, 2);
+		zz, 2);
 
 	long supported[] = {
 		/* Misc */
@@ -70,18 +75,14 @@ ewmh_init(void) {
 
 void
 ewmh_updateclientlist(void) {
+	Vector_long vec;
 	Client *c;
-	long *list;
-	int i;
 
-	i = 0;
+	vector_linit(&vec);
 	for(c=client; c; c=c->next)
-		i++;
-	list = emalloc(i * sizeof *list);
-	i = 0;
-	for(c=client; c; c=c->next)
-		list[i++] = c->w.w;
-	changeprop_long(&scr.root, Net("CLIENT_LIST"), "WINDOW", list, i);
+		vector_lpush(&vec, c->w.xid);
+	changeprop_long(&scr.root, Net("CLIENT_LIST"), "WINDOW", vec.ary, vec.n);
+	free(vec.ary);
 }
 
 void
@@ -90,21 +91,22 @@ ewmh_updatestacking(void) {
 	Frame *f;
 	Area *a;
 	View *v;
+	int s;
 
 	vector_linit(&vec);
 
-	for(v=view; v; v=v->next)
-		for(a=v->area->next; a; a=a->next)
+	for(v=view; v; v=v->next) {
+		foreach_column(v, s, a)
 			for(f=a->frame; f; f=f->anext)
 				if(f->client->sel == f)
-					vector_lpush(&vec, f->client->w.w);
+					vector_lpush(&vec, f->client->w.xid);
+	}
 	for(v=view; v; v=v->next) {
-		for(f=v->area->stack; f; f=f->snext)
-			if(!f->snext)
-				break;
+		for(f=v->floating->stack; f; f=f->snext)
+			if(!f->snext) break;
 		for(; f; f=f->sprev)
 			if(f->client->sel == f)
-				vector_lpush(&vec, f->client->w.w);
+				vector_lpush(&vec, f->client->w.xid);
 	}
 
 	changeprop_long(&scr.root, Net("CLIENT_LIST_STACKING"), "WINDOW", vec.ary, vec.n);
@@ -120,6 +122,7 @@ ewmh_initclient(Client *c) {
 	changeprop_long(&c->w, Net("WM_ALLOWED_ACTIONS"), "ATOM",
 		allowed, nelem(allowed));
 	ewmh_getwintype(c);
+	ewmh_getwinstate(c);
 	ewmh_getstrut(c);
 	ewmh_updateclientlist();
 }
@@ -141,6 +144,7 @@ static void
 pingtimeout(long id, void *v) {
 	Client *c;
 
+	USED(id);
 	c = v;
 	event("Unresponsive %C\n", c);
 	c->w.ewmh.ping = 0;
@@ -158,7 +162,7 @@ ewmh_pingclient(Client *c) {
 	if(e->ping)
 		return;
 
-	sendmessage(&c->w, "WM_PROTOCOLS", NET("WM_PING"), xtime, c->w.w, 0, 0);
+	client_message(c, Net("WM_PING"), c->w.xid);
 	e->ping = xtime++;
 	e->timer = ixp_settimer(&srv, PingTime, pingtimeout, c);
 }
@@ -183,7 +187,7 @@ struct Prop {
 };
 
 static long
-getmask(Prop *props, long *vals, int n) {
+getmask(Prop *props, ulong *vals, int n) {
 	Prop *p;
 	long ret;
 
@@ -203,33 +207,52 @@ getmask(Prop *props, long *vals, int n) {
 	return ret;
 }
 
+static long
+getprop_mask(Window *w, char *prop, Prop *props) {
+	ulong *vals;
+	long n, mask;
+
+	n = getprop_ulong(w, prop, "ATOM",
+		0L, &vals, 16);
+	mask = getmask(props, vals, n);
+	free(vals);
+	return mask;
+}
+
 void
 ewmh_getwintype(Client *c) {
 	static Prop props[] = {
 		{Type("DESKTOP"), TypeDesktop},
-		{Type("DOCK"), TypeDock},
+		{Type("DOCK"),    TypeDock},
 		{Type("TOOLBAR"), TypeToolbar},
-		{Type("MENU"), TypeMenu},
+		{Type("MENU"),    TypeMenu},
 		{Type("UTILITY"), TypeUtility},
-		{Type("SPLASH"), TypeSplash},
-		{Type("DIALOG"), TypeDialog},
-		{Type("NORMAL"), TypeNormal},
+		{Type("SPLASH"),  TypeSplash},
+		{Type("DIALOG"),  TypeDialog},
+		{Type("NORMAL"),  TypeNormal},
 		{0, }
 	};
-	long *types;
-	long n, mask;
+	long mask;
 
-	n = getprop_long(&c->w, Net("WM_WINDOW_TYPE"), "ATOM",
-		0L, &types, 16);
-	Dprint(DEwmh, "ewmh_getwintype(%C) n = %ld\n", c, n);
-	mask = getmask(props, types, n);
-	free(types);
+	mask = getprop_mask(&c->w, Net("WM_WINDOW_TYPE"), props);
 
 	c->w.ewmh.type = mask;
 	if(mask & TypeDock) {
 		c->borderless = 1;
 		c->titleless = 1;
 	}
+}
+
+static void
+ewmh_getwinstate(Client *c) {
+	ulong *vals;
+	long n;
+
+	n = getprop_ulong(&c->w, Net("WM_STATE"), "ATOM",
+		0L, &vals, 16);
+	while(--n >= 0)
+		ewmh_setstate(c, vals[n], On);
+	free(vals);
 }
 
 long
@@ -240,15 +263,8 @@ ewmh_protocols(Window *w) {
 		{Net("WM_PING"), ProtoPing},
 		{0, }
 	};
-	long *protos;
-	long n, mask;
 
-	n = getprop_long(w, "WM_PROTOCOLS", "ATOM",
-		0L, &protos, 16);
-	Dprint(DEwmh, "ewmh_protocols(%W) n = %ld\n", w, n);
-	mask = getmask(props, protos, n);
-	free(protos);
-	return mask;
+	return getprop_mask(w, "WM_PROTOCOLS", props);
 }
 
 void
@@ -296,17 +312,32 @@ ewmh_getstrut(Client *c) {
 	Dprint(DEwmh, "\tright: %R\n", c->strut->right);
 	Dprint(DEwmh, "\tbottom: %R\n", c->strut->bottom);
 	free(strut);
-	view_focus(screen, screen->sel);
+	view_update(selview);
+}
+
+static void
+ewmh_setstate(Client *c, Atom state, int action) {
+
+	Dprint(DEwmh, "\tSTATE = %A\n", state);
+	if(state == 0)
+		return;
+
+	if(state == STATE("FULLSCREEN"))
+		fullscreen(c, action, -1);
+	else
+	if(state == STATE("DEMANDS_ATTENTION"))
+		client_seturgent(c, action, UrgClient);
 }
 
 int
 ewmh_clientmessage(XClientMessageEvent *e) {
 	Client *c;
 	View *v;
-	long *l;
-	int msg, action, i;
+	ulong *l;
+	ulong msg;
+	int action, i;
 
-	l = e->data.l;
+	l = (ulong*)e->data.l;
 	msg = e->message_type;
 	Dprint(DEwmh, "ClientMessage: %A\n", msg);
 
@@ -325,20 +356,11 @@ ewmh_clientmessage(XClientMessageEvent *e) {
 		case StateUnset:  action = Off;    break;
 		case StateSet:    action = On;     break;
 		case StateToggle: action = Toggle; break;
-		default:
-			return -1;
+		default: return -1;
 		}
 		Dprint(DEwmh, "\tAction: %s\n", TOGGLE(action));
-		for(i = 1; i <= 2; i++) {
-			if(l[i] == 0)
-				break;
-			Dprint(DEwmh, "\tl[%d] = %A\n", i, l[i]);
-			if(l[i] == STATE("FULLSCREEN"))
-				fullscreen(c, action);
-			else
-			if(l[i] == STATE("DEMANDS_ATTENTION"))
-				client_seturgent(c, action, UrgClient);
-		}
+		ewmh_setstate(c, l[1], action);
+		ewmh_setstate(c, l[2], action);
 		return 1;
 	}else
 	if(msg == NET("ACTIVE_WINDOW")) {
@@ -371,7 +393,7 @@ ewmh_clientmessage(XClientMessageEvent *e) {
 			return 0;
 		Dprint(DEwmh, "\t%A\n", l[0]);
 		if(l[0] == NET("WM_PING")) {
-			if(e->window != scr.root.w)
+			if(e->window != scr.root.xid)
 				return -1;
 			c = win2client(l[2]);
 			if(c == nil)
@@ -416,13 +438,13 @@ ewmh_updatestate(Client *c) {
 	int i;
 
 	f = c->sel;
-	if(f == nil || f->view != screen->sel)
+	if(f == nil || f->view != selview)
 		return;
 
 	i = 0;
 	if(f->collapsed)
 		state[i++] = STATE("SHADED");
-	if(c->fullscreen)
+	if(c->fullscreen >= 0)
 		state[i++] = STATE("FULLSCREEN");
 	if(c->urgent)
 		state[i++] = STATE("DEMANDS_ATTENTION");
@@ -437,20 +459,19 @@ ewmh_updatestate(Client *c) {
 void
 ewmh_updateviews(void) {
 	View *v;
-	char **tags;
+	Vector_ptr tags;
 	long i;
 
 	if(starting)
 		return;
 
+	vector_pinit(&tags);
 	for(v=view, i=0; v; v=v->next)
-		i++;
-	tags = emalloc((i + 1) * sizeof *tags);
-	for(v=view, i=0; v; v=v->next)
-		tags[i++] = v->name;
-	tags[i] = nil;
-	changeprop_textlist(&scr.root, Net("DESKTOP_NAMES"), "UTF8_STRING", tags);
+		vector_ppush(&tags, v->name);
+	vector_ppush(&tags, nil);
+	changeprop_textlist(&scr.root, Net("DESKTOP_NAMES"), "UTF8_STRING", (char**)tags.ary);
 	changeprop_long(&scr.root, Net("NUMBER_OF_DESKTOPS"), "CARDINAL", &i, 1);
+	vector_pfree(&tags);
 	ewmh_updateview();
 	ewmh_updateclients();
 }
@@ -474,7 +495,7 @@ ewmh_updateview(void) {
 	if(starting)
 		return;
 
-	i = viewidx(screen->sel);
+	i = viewidx(selview);
 	changeprop_long(&scr.root, Net("CURRENT_DESKTOP"), "CARDINAL", &i, 1);
 }
 

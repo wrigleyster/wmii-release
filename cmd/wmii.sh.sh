@@ -4,10 +4,6 @@ if [ -z "$scriptname" ]; then
 echo Start $wmiiscript | wmiir write /event 2>/dev/null ||
 	exit 1
 
-Keys=""
-Actions=""
-Events=""
-
 wi_nl='
 '
 
@@ -18,18 +14,25 @@ _wi_script() {
 		narg = 1;
 		body = "";
 	}
+	function quote(s) {
+		gsub(/"'"/, "'\\''", s)
+		return "'" s "'"
+	}
 	function addevent() {
 		var = arg[1] "s"
 		for(i=2; i <= narg; i++) {
-			printf "%s=\"$%s\n%s\"\n", var, var, arg[i]
-			gsub("[^a-zA-Z_0-9]", "_", arg[i]);
-			if(body != "") {
-				printf "%s_%s() { %s\n }\n", arg[1], arg[i], body
-				body = sprintf("%s_%s \"$@\"", arg[1], arg[2])
+			if(body == "")
+				delete a[arg[1],arg[i]]
+			else
+				a[arg[1],arg[i]] = body
+			if(i == 2) {
+				# There's a bug here. Can you spot it?
+				gsub("[^a-zA-Z_0-9]", "_", arg[2]);
+				body = sprintf("%s %s \"$@\"", arg[1], arg[2])
 			}
 		}
 	}
-	/^(Event|Key|Action)[ \t]/ {
+	/^(Event|Key|Action|Menu)[ \t]/ {
 		addevent()
 		split($0, arg)
 		narg = NF
@@ -41,13 +44,36 @@ _wi_script() {
 
 	END {
 		addevent()
+		for(k in a) {
+			split(k, b, SUBSEP)
+			c[b[1]] = c[b[1]] b[2] "\n"
+			if(body != "")
+				d[b[1]] = d[b[1]] quote(b[2]) ")" a[k] ";;\n"
+		}
+		for(k in c)
+			printf "%ss=%s\n", k, quote(c[k])
+		for(k in d) {
+			printf "%s() {\n", k
+			printf " %s=$1; shift\n", tolower(k)
+			printf "case $%s in\n%s\n*) return 1\nesac\n", tolower(k), d[k]
+			printf "}\n"
+		}
 	}
 !
 }
 
 _wi_text() {
+	cat <<'!'
+Event Start
+	if [ "$1" = "$wmiiscript" ]; then
+		exit
+	fi
+Event Key
+	Key "$@"
+!
 	eval "cat <<!
 $(sed "$_sed" | sed '/^[ 	]/s/\([$`]\)/\\\1/g')
+!
 "
 }
 
@@ -57,6 +83,7 @@ wi_events() {
 		_sed="s/^$2//"
 		shift 2
 	fi
+	#cho "$(_wi_text | awk "$(_wi_script)")" | cat -n
 	eval "$(_wi_text | awk "$(_wi_script)")"
 }
 
@@ -77,13 +104,17 @@ wmiifont="$(wi_readctl font)"
 wmiinormcol="$(wi_readctl normcolors)"
 wmiifocuscol="$(wi_readctl focuscolors)"
 
-wi_menu() {
-	eval "wi_menu() { $WMII_MENU"' "$@"; }'
-	wi_menu "$@"
-}
-wi_9menu() {
-	eval "wi_9menu() { $WMII_9MENU"' "$@"; }'
-	wi_9menu "$@"
+wi_fnmenu() {
+	group="$1-$2"; shift 2
+	_last="$(echo $group|tr - _)_last"
+	eval "last=\"\$$_last\""
+	res=$(set -- $(echo "$Menus" | awk -v "s=$group" 'BEGIN{n=length(s)}
+		         substr($1,1,n) == s{print substr($1,n+2)}')
+	      [ $# != 0 ] && wmii9menu -i "$last" "$@")
+	if [ -n "$res" ]; then
+		eval "$_last="'"$res"'
+		Menu $group-$res "$@"
+	fi
 }
 
 wi_proglist() {
@@ -94,14 +125,21 @@ wi_proglist() {
 
 wi_actions() {
 	{	wi_proglist $WMII_CONFPATH
-	 	wi_getfuns Action
+	 	echo -n "$Actions"
 	} | sort | uniq
 }
 
-conf_which() {
-	which=$(which which)
-	prog=$(PATH="$WMII_CONFPATH" $which $1); shift
-	[ -n "$prog" ] && $prog "$@"
+wi_runconf() {
+	sflag=""; if [ "$1" = -s ]; then sflag=1; shift; fi
+	which="$(which which)"
+	prog=$(PATH="$WMII_CONFPATH" "$which" -- $1 2>/dev/null); shift
+	if [ -n "$prog" ]; then
+		if [ -z "$sflag" ]
+		then "$prog" "$@"
+		else . "$prog"
+		fi
+	else return 1
+	fi
 }
 
 wi_script() {
@@ -120,11 +158,19 @@ wi_runcmd() {
 		shift
 		set -- wihack -tags $(wmiir read /tag/sel/ctl | sed 1q) "$*"
 	fi
-	eval exec $* &
+	eval exec "$*" &
 }
 
 wi_tags() {
 	wmiir ls /tag | sed 's,/,,; /^sel$/d'
+}
+
+wi_seltag() {
+	wmiir read /tag/sel/ctl | sed 1q | tr -d '\012'
+}
+
+wi_selclient() {
+	wmiir read /client/sel/ctl | sed 1q | tr -d '\012'
 }
 
 wi_eventloop() {
@@ -132,30 +178,22 @@ wi_eventloop() {
 
 	wmiir read /event | while read wi_event
 	do
-		OIFS="$IFS"; IFS="$wi_nl"
+		IFS="$wi_nl"
 		wi_arg=$(echo "$wi_event" | sed 's/^[^ ]* //')
-		IFS="$OIFS"
+		unset IFS
 		set -- $wi_event
 		event=$1; shift
-		Event_$event $@
-	done 2>/dev/null
+		Event $event "$@"
+	done
+	true
 }
 
-wi_events <<'!'
-Event Start
-	if [ "$1" = "$wmiiscript" ]; then
-		exit
-	fi
-Event Key
-	fn=$(echo "$@" | sed 's/[^a-zA-Z_0-9]/_/g')
-	Key_$fn "$@"
-!
-
-Action() {
+action() {
 	action=$1; shift
 	if [ -n "$action" ]; then
-		Action_$action "$@" \
-		|| conf_which $action "$@"
+		set +x
+		Action $action "$@" \
+		|| wi_runconf $action "$@"
 	fi
 }
 

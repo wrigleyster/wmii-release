@@ -1,12 +1,15 @@
 /* Written by Kris Maglione <fbsdaemon at gmail dot com> */
 /* Public domain */
+#include <ctype.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <util.h>
 #include <fmt.h>
@@ -79,9 +82,15 @@ sxprint(const char *fmt, ...) {
 }
 
 void
-_die(char *file, int line, char *msg) {
+_die(char *file, int line, char *msg, ...) {
+	va_list ap;
+
+	va_start(ap, msg);
 	fprint(2, "%s: dieing at %s:%d: %s\n",
-		argv0, file, line, msg);
+		argv0, file, line,
+		vsxprint(msg, ap));
+	va_end(ap);
+
 	kill(getpid(), SIGABRT);
 	abort(); /* Adds too many frames:
 		  *  _die()
@@ -142,13 +151,25 @@ erealloc(void *ptr, uint size) {
 	return ret;
 }
 
-char *
+char*
 estrdup(const char *str) {
 	void *ret = strdup(str);
 	if(!ret)
 		mfatal("strdup", strlen(str));
 	return ret;
 }
+
+char*
+estrndup(const char *str, uint len) {
+	char *ret;
+	
+	len = min(len, strlen(str));
+	ret = emalloc(len + 1);
+	memcpy(ret, str, len);
+	ret[len] = '\0';
+	return ret;
+}
+
 
 uint
 tokenize(char *res[], uint reslen, char *str, char delim) {
@@ -163,6 +184,24 @@ tokenize(char *res[], uint reslen, char *str, char delim) {
 		if(*s)
 			res[i++] = s;
 		while(*s && *s != delim)
+			s++;
+	}
+	return i;
+}
+
+uint
+stokenize(char *res[], uint reslen, char *str, char *delim) {
+	char *s;
+	uint i;
+
+	i = 0;
+	s = str;
+	while(i < reslen && *s) {
+		while(strchr(delim, *s))
+			*(s++) = '\0';
+		if(*s)
+			res[i++] = s;
+		while(*s && !strchr(delim, *s))
 			s++;
 	}
 	return i;
@@ -212,4 +251,22 @@ strlcat(char *dst, const char *src, uint size) {
 		*d = '\0';
 	return size - n - 1;
 }
+
+/* TODO: Make this UTF-8 compliant. */
+char*
+strcasestr(const char *dst, const char *src) {
+	int dc, sc;
+        int len;
+
+	len = strlen(src) - 1;
+	for(; (sc = *src) && *dst; src++) {
+		sc = tolower(dc);
+		for(; (dc = *dst); dst++) {
+			dc = tolower(dc);
+			if(sc == dc && !strncasecmp(dst+1, src+1, len))
+				return (char*)(uintptr_t)dst;
+		}
+	}
+	return nil;
+} 
 

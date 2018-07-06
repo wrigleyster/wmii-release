@@ -6,6 +6,7 @@
 #define Screen XScreen
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #ifdef _X11_VISIBLE
 #  include <X11/Xatom.h>
 #  include <X11/extensions/shape.h>
@@ -27,12 +28,20 @@ enum Align {
 	Center = NEast | SWest,
 };
 
+enum FontType {
+	FX11 = 1,
+	FFontSet,
+	FXft,
+};
+
 enum WindowType {
 	WWindow,
 	WImage,
 };
 
 typedef enum Align Align;
+typedef enum FontType FontType;
+typedef enum WindowType WindowType;
 
 typedef XSetWindowAttributes WinAttr;
 
@@ -48,6 +57,7 @@ struct Rectangle {
 };
 
 typedef struct CTuple CTuple;
+typedef struct ErrorCode ErrorCode;
 typedef struct Ewmh Ewmh;
 typedef struct Font Font;
 typedef struct Handlers Handlers;
@@ -63,6 +73,11 @@ struct CTuple {
 	char colstr[24]; /* #RRGGBB #RRGGBB #RRGGBB */
 };
 
+struct ErrorCode {
+	uchar rcode;
+	uchar ecode;
+};
+
 struct Ewmh {
 	long	type;
 	long	ping;
@@ -70,18 +85,23 @@ struct Ewmh {
 };
 
 struct Font {
-	XFontStruct *xfont;
-	XFontSet set;
-	int ascent;
-	int descent;
-	uint height;
-	char *name;
+	int	type;
+	union {
+		XFontStruct*	x11;
+		XFontSet	set;
+		XftFont*	xft;
+	} font;
+	int	ascent;
+	int	descent;
+	uint	height;
+	char*	name;
 };
 
 struct Handlers {
 	Rectangle (*dndmotion)(Window*, Point);
 	void (*bdown)(Window*, XButtonEvent*);
 	void (*bup)(Window*, XButtonEvent*);
+	void (*config)(Window*, XConfigureEvent*);
 	void (*configreq)(Window*, XConfigureRequestEvent*);
 	void (*destroy)(Window*, XDestroyWindowEvent*);
 	void (*enter)(Window*, XCrossingEvent*);
@@ -92,6 +112,7 @@ struct Handlers {
 	void (*kup)(Window*, XKeyEvent*);
 	void (*leave)(Window*, XCrossingEvent*);
 	void (*map)(Window*, XMapEvent*);
+	void (*mapreq)(Window*, XMapRequestEvent*);
 	void (*motion)(Window*, XMotionEvent*);
 	void (*property)(Window*, XPropertyEvent*);
 	void (*unmap)(Window*, XUnmapEvent*);
@@ -112,9 +133,13 @@ struct WinHints {
 
 struct Window {
 	int		type;
-	XID		w;
+	XID		xid;
 	GC		gc;
+	Visual*		visual;
+	Colormap	colormap;
+	XftDraw*	xft;
 	Rectangle	r;
+	int		border;
 	Window*		parent;
 	Window*		next;
 	Window*		prev;
@@ -134,6 +159,7 @@ struct Screen {
 	GC		gc;
 	Colormap	colormap;
 	Visual*		visual;
+	Visual*		visual32;
 	Rectangle	rect;
 	int		depth;
 	int		fd;
@@ -143,16 +169,16 @@ struct Screen {
 
 #ifdef VARARGCK
 # pragma varargck	type	"A"	Atom
-# pragma varargck	type	"W"	Window*	
 # pragma varargck	type	"P"	Point
 # pragma varargck	type	"R"	Rectangle
+# pragma varargck	type	"W"	Window*	
 #endif
 
 Display *display;
 Screen scr;
 
-extern Point ZP;
-extern Rectangle ZR;
+extern const Point ZP;
+extern const Rectangle ZR;
 extern Window* pointerwin;
 
 Point Pt(int x, int y);
@@ -180,9 +206,11 @@ void	changeprop_long(Window*, char*, char*, long[], int);
 void	changeprop_short(Window*, char*, char*, short[], int);
 void	changeprop_string(Window*, char*, char*);
 void	changeprop_textlist(Window*, char*, char*, char*[]);
+void	changeprop_ulong(Window*, char*, char*, ulong[], int);
 void	changeproperty(Window*, char*, char*, int width, uchar*, int);
 void	copyimage(Image*, Rectangle, Image*, Point);
-Window*	createwindow(Window *parent, Rectangle, int depth, uint class, WinAttr*, int valuemask);
+Window*	createwindow(Window*, Rectangle, int depth, uint class, WinAttr*, int valuemask);
+Window* createwindow_visual(Window*, Rectangle, int depth, Visual*, uint class, WinAttr*, int);
 void	delproperty(Window*, char*);
 void	destroywindow(Window*);
 Point	divpt(Point, Point);
@@ -197,10 +225,13 @@ Window*	findwin(XWindow);
 void	freefont(Font*);
 void	freeimage(Image *);
 void	freestringlist(char**);
+XWindow	getfocus(void);
 ulong	getprop_long(Window*, char*, char*, ulong, long**, ulong);
 char*	getprop_string(Window*, char*);
 int	getprop_textlist(Window *w, char *name, char **ret[]);
+ulong	getprop_ulong(Window*, char*, char*, ulong, ulong**, ulong);
 ulong	getproperty(Window*, char *prop, char *type, Atom *actual, ulong offset, uchar **ret, ulong length);
+int	grabkeyboard(Window*);
 int	grabpointer(Window*, Window *confine, Cursor, int mask);
 void	initdisplay(void);
 KeyCode	keycode(char*);
@@ -212,22 +243,27 @@ int	mapwin(Window*);
 void	movewin(Window*, Point);
 Point	mulpt(Point p, Point q);
 bool	namedcolor(char *name, ulong*);
+bool	parsekey(char*, int*, char**);
 int	pointerscreen(void);
 Point	querypointer(Window*);
 void	raisewin(Window*);
 void	reparentwindow(Window*, Window*, Point);
 void	reshapewin(Window*, Rectangle);
+void	selectinput(Window*, long);
 void	sendevent(Window*, bool propegate, long mask, XEvent*);
+void	setborder(Window*, int, long);
 void	setfocus(Window*, int mode);
 void	sethints(Window*);
 void	setshapemask(Window *dst, Image *src, Point);
 void	setwinattr(Window*, WinAttr*, int valmask);
-char**	strlistdup(char**, int);
+char**	strlistdup(char**);
 Point	subpt(Point, Point);
 void	sync(void);
 uint	textwidth(Font*, char*);
 uint	textwidth_l(Font*, char*, uint len);
+int	traperrors(bool);
 Point	translate(Window*, Window*, Point);
+void	ungrabkeyboard(void);
 void	ungrabpointer(void);
 int	unmapwin(Window*);
 void	warppointer(Point);
@@ -236,6 +272,7 @@ long	winprotocols(Window*);
 Atom	xatom(char*);
 void	sendmessage(Window*, char*, long, long, long, long, long);
 XRectangle	XRect(Rectangle);
+Rectangle	getwinrect(Window*);
 Rectangle	gravitate(Rectangle dst, Rectangle src, Point grav);
 Rectangle	insetrect(Rectangle, int);
 Rectangle	rectaddpt(Rectangle, Point);

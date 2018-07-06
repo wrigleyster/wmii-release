@@ -1,16 +1,19 @@
 ROOT= ../..
-include ${ROOT}/mk/hdr.mk
-include ${ROOT}/mk/wmii.mk
+include $(ROOT)/mk/hdr.mk
+include $(ROOT)/mk/wmii.mk
 
-main.c: ${ROOT}/mk/wmii.mk
+main.c: $(ROOT)/mk/wmii.mk
 
 TARG =	wmii
 HFILES=	dat.h fns.h
 
-LIB =	${LIBIXP}
-LDFLAGS += -lm ${LIBX11} -lXext -lXrandr ${LIBICONV} -lregexp9 -lbio -lfmt -lutf
-CFLAGS += ${INCX11} ${INCICONV} -DVERSION=\"${VERSION}\" \
-	  -DIXP_NEEDAPI=86
+PACKAGES += $(X11PACKAGES) xext xrandr xrender xinerama
+
+LIB =	$(LIBIXP)
+LDFLAGS += -lm $(LIBICONV) -lregexp9 -lbio -lfmt -lutf
+
+CFLAGS += $(INCICONV) -DVERSION=\"$(VERSION)\" \
+	  -DIXP_NEEDAPI=97
 OBJ =	area	\
 	bar	\
 	client	\
@@ -23,18 +26,22 @@ OBJ =	area	\
 	fs	\
 	geom	\
 	key	\
+	layout	\
 	main	\
 	map	\
 	message	\
 	mouse	\
+	root	\
 	rule	\
 	printevent\
+	screen	\
 	utf	\
+	_util	\
 	view	\
 	xdnd	\
 	x11	\
 	xext	\
 	../util
 
-include ${ROOT}/mk/one.mk
+include $(ROOT)/mk/one.mk
 

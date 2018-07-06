@@ -35,30 +35,31 @@
  * Heavily modified by Kris Maglione for use with wmii.
  */
 
+#define IXP_NO_P9_
+#define IXP_P9_STRUCTS
+#include <fmt.h>
+#include <ixp.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <X11/Xutil.h>
+#include <clientutil.h>
 #include <util.h>
+#include <x11.h>
 
 char version[] = "@(#) wmii9menu version 1.8";
 
-/* lovely X stuff */
-Display *dpy;
-int screen;
-Window root;
-Window menuwin;
-Colormap defcmap;
-XColor color;
-XFontStruct *font;
-GC gc;
+static Window*	menuwin;
 
-ulong selfg, selbg;
-ulong normfg, normbg;
-ulong border;
-char *sfgname, *sbgname;
-char *nfgname, *nbgname;
-char *brcname;
+static CTuple	cnorm;
+static CTuple	csel;
+static Font*	font;
+
+static int	wborder;
+
+char	buffer[8092];
+char*	_buffer;
 
 /* for XSetWMProperties to use */
 int g_argc;
@@ -67,110 +68,55 @@ char **g_argv;
 char *initial = "";
 int cur;
 
-char *fontlist[] = {	/* default font list if no -font */
-	"pelm.latin1.9",
-	"lucm.latin1.9",
-	"blit",
-	"9x15bold",
-	"9x15",
-	"lucidasanstypewriter-12",
-	"fixed",
-	nil
-};
-
-char *progname;		/* my name */
-char *displayname;	/* X display */
-char *fontname;		/* font */
-
-char **labels;		/* list of labels and commands */
-char **commands;
-int numitems;
+static char**	labels;		/* list of labels and commands */
+static char**	commands;
+static int	numitems;
 
 void usage(void);
 void run_menu(void);
-void create_window(int, int);
+void create_window(void);
+void size_window(int, int);
 void redraw(int, int);
 void warpmouse(int, int);
 void memory(void);
 int args(void);
-
-/* args --- go through the argument list, set options */
-
-struct {
-	char *name, **var;
-} argtab[] = {
-	{"display", &displayname},
-	{"initial", &initial},
-	{"font", &fontname},
-	{"nb", &nbgname},
-	{"nf", &nfgname},
-	{"sb", &sbgname},
-	{"sf", &sfgname},
-	{"br", &brcname},
-	{0, },
-}, *ap;
-
-static ulong
-getcolor(char *name, ulong def) {
-	if((name != nil)
-	 && (XParseColor(dpy, defcmap, name, &color) != 0)
-	 && (XAllocColor(dpy, defcmap, &color) != 0))
-		return color.pixel;
-	else
-		return def;
-}
 
 /* main --- crack arguments, set up X stuff, run the main menu loop */
 
 int
 main(int argc, char **argv)
 {
-	int i, n;
+	static char *address;
 	char *cp;
-	XGCValues gv;
-	ulong mask;
+	int i;
 
 	g_argc = argc;
 	g_argv = argv;
 
-	/* set default label name */
-	if((cp = strrchr(argv[0], '/')) != nil)
-		progname = ++cp;
-	else
-		progname = argv[0];
-
-	for(i = 1; i < argc && argv[i][0] == '-'; i++) {
-		if(strcmp(argv[i], "-version") == 0) {
-			printf("%s\n", version);
-			exit(0);
-		}
-
-		SET(n);
-		for(ap = argtab; ap->name; ap++) {
-			n = strlen(ap->name);
-			if(strncmp(ap->name, argv[i]+1, n) == 0)
-				break;
-		}
-		if(ap->name == 0)
-			usage();
-
-		if(argv[i][n+1] != '\0')
-			*ap->var = &argv[i][n+1];
-		else {
-			if(argc <= i+1)
-				usage();
-			*ap->var = argv[++i];
-		}
-	}
-	argc -= i, argv += i;
+	ARGBEGIN{
+	case 'v':
+		print("%s\n", version);
+		return 0;
+	case 'a':
+		address = EARGF(usage());
+		break;
+	case 'i':
+		initial = EARGF(usage());
+		break;
+	default:
+		usage();
+	}ARGEND;
 
 	if(argc == 0)
 		usage();
 
+	initdisplay();
+	create_window();
+
 	numitems = argc;
 
-	labels = emalloc(numitems * sizeof(*labels));
-	commands = emalloc(numitems * sizeof(*labels));
+	labels = emalloc(numitems * sizeof *labels);
+	commands = emalloc(numitems * sizeof *labels);
 
 	for(i = 0; i < numitems; i++) {
 		labels[i] = argv[i];
@@ -183,56 +129,18 @@ main(int argc, char **argv)
 			cur = i;
 	}
 
-	dpy = XOpenDisplay(displayname);
-	if(dpy == nil) {
-		fprintf(stderr, "%s: cannot open display", progname);
-		if(displayname != nil)
-			fprintf(stderr, " %s", displayname);
-		fprintf(stderr, "\n");
-		exit(1);
-	}
-	screen = DefaultScreen(dpy);
-	root = RootWindow(dpy, screen);
-	defcmap = DefaultColormap(dpy, screen);
+	client_init(address);
 
-	selbg = getcolor(sbgname, BlackPixel(dpy, screen));
-	selfg = getcolor(sfgname, WhitePixel(dpy, screen));
-	normbg = getcolor(nbgname, selfg);
-	normfg = getcolor(nfgname, selbg);
-	border = getcolor(brcname, selbg);
-
-	/* try user's font first */
-	if(fontname != nil) {
-		font = XLoadQueryFont(dpy, fontname);
-		if(font == nil)
-			fprintf(stderr, "%s: warning: can't load font '%s'\n",
-				progname, fontname);
-	}
-
-	/* if no user font, try one of our default fonts */
-	if(font == nil) {
-		for(i = 0; fontlist[i] != nil; i++) {
-			font = XLoadQueryFont(dpy, fontlist[i]);
-			if(font != nil)
-				break;
-		}
-	}
-
-	if(font == nil) {
-		fprintf(stderr, "%s: fatal: cannot load a font\n", progname);
-		exit(1);
-	}
-
-	gv.foreground = normfg;
-	gv.background = normbg;
-	gv.font = font->fid;
-	gv.line_width = 0;
-	mask = GCForeground | GCBackground | GCFont | GCLineWidth;
-	gc = XCreateGC(dpy, root, mask, &gv);
+	wborder = strtol(readctl("border "), nil, 10);
+	loadcolor(&cnorm, readctl("normcolors "));
+	loadcolor(&csel, readctl("focuscolors "));
+	font = loadfont(readctl("font "));
+	if(!font)
+		fatal("Can't load font");
 
 	run_menu();
 
-	XCloseDisplay(dpy);
+	XCloseDisplay(display);
 	return 0;
 }
 
@@ -241,15 +149,14 @@ main(int argc, char **argv)
 void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-display <displayname>] [-font <fontname>] ", progname);
-	fprintf(stderr, "[-{n,s}{f,b} <color>] [-br <color>] ");
-	fprintf(stderr, "[-version] menitem[:command] ...\n");
+	fprintf(stderr, "usage: %s -v\n", argv0);
+	fprintf(stderr, "       %s [-a <address>] [-i <arg>] menitem[:command] ...\n", argv0);
 	exit(0);
 }
 
 /* run_menu --- put up the window, execute selected commands */
 
-	enum {
+enum {
 	MouseMask = 
 		  ButtonPressMask
 		| ButtonReleaseMask
@@ -259,40 +166,32 @@ usage(void)
 		  MouseMask
 		| StructureNotifyMask
 		| ExposureMask
-	};
+};
 
 void
 run_menu(void)
 {
 	XEvent ev;
-	int i, old, wide, high, dx;
+	int i, old, wide, high;
 
-	dx = 0;
-	for(i = 0; i < numitems; i++) {
-		wide = XTextWidth(font, labels[i], strlen(labels[i])) + 4;
-		if(wide > dx)
-			dx = wide;
-	}
-	wide = dx;
+	wide = 0;
+	high = labelh(font);
+	for(i = 0; i < numitems; i++)
+		wide = max(wide, textwidth(font, labels[i]));
+	wide += font->height & ~1;
 
-	high = font->ascent + font->descent + 1;
-
-	create_window(wide, high);
+	size_window(wide, high);
 	warpmouse(wide, high);
 
-	XSelectInput(dpy, menuwin, MenuMask);
-
-	XMapWindow(dpy, menuwin);
-
 	for(;;) {
-		XNextEvent(dpy, &ev);
+		XNextEvent(display, &ev);
 		switch (ev.type) {
 		default:
 			fprintf(stderr, "%s: unknown ev.type %d\n",
-				progname, ev.type);
+				argv0, ev.type);
 			break;
 		case ButtonRelease:
-			i = ev.xbutton.y/high;
+			i = ev.xbutton.y / high;
 			if(ev.xbutton.x < 0 || ev.xbutton.x > wide)
 				return;
 			else if(i < 0 || i >= numitems)
@@ -303,7 +202,7 @@ run_menu(void)
 		case ButtonPress:
 		case MotionNotify:
 			old = cur;
-			cur = ev.xbutton.y/high;
+			cur = ev.xbutton.y / high;
 			if(ev.xbutton.x < 0 || ev.xbutton.x > wide)
 				cur = ~0;
 			if(cur == old)
@@ -312,16 +211,12 @@ run_menu(void)
 			break;
 		case MapNotify:
 			redraw(high, wide);
-			if(XGrabPointer(dpy, menuwin,
-					False, MouseMask,
-					GrabModeAsync, GrabModeAsync,
-					0, None, CurrentTime) != GrabSuccess)
-				fprintf(stderr, "Failed to grab the mouse\n");
 			break;
 		case Expose:
 			redraw(high, wide);
 			break;
-		case MappingNotify:	/* why do we get this? */
+		case ConfigureNotify:
+		case MappingNotify:
 			break;
 		}
 	}
@@ -330,42 +225,50 @@ run_menu(void)
 /* set_wm_hints --- set all the window manager hints */
 
 void
-create_window(int wide, int high)
+create_window(void)
 {
-	XSetWindowAttributes wa = { 0 };
-	uint h;
-	int x, y, dummy;
-	Window wdummy;
-	
+	WinAttr wa = { 0 };
+	XEvent e;
+
+	wa.override_redirect = true;
+	menuwin = createwindow(&scr.root, Rect(-1, -1, 0, 0),
+			       scr.depth, InputOutput,
+			       &wa, CWOverrideRedirect);
+	selectinput(menuwin, MenuMask);
+	mapwin(menuwin);
+	XMaskEvent(display, StructureNotifyMask, &e);
+	if(!grabpointer(menuwin, nil, 0, MouseMask))
+		fatal("Failed to grab the mouse\n");
+	XSetCommand(display, menuwin->xid, g_argv, g_argc);
+}
+
+void
+size_window(int wide, int high)
+{
+	Rectangle r;
+	Point p;
+	int h;
+
 	h = high * numitems;
+	r = Rect(0, 0, wide, h);
 
-	XQueryPointer(dpy, root, &wdummy, &wdummy, &x, &y,
-				&dummy, &dummy, (uint*)&dummy);
-	x -= wide / 2;
-	if(x < 0)
-		x = 0;
-	else if(x + wide > DisplayWidth(dpy, screen))
-		x = DisplayWidth(dpy, screen) - wide;
+	p = querypointer(&scr.root);
+	p.x -= wide / 2;
+	if(p.x < 0)
+		p.x = 0;
+	else if(p.x + wide > Dx(scr.rect))
+		p.x = Dx(scr.rect) - wide;
 
-	y -= cur * high + high / 2;
-	if(y < 0)
-		y = 0;
-	else if(y + h > DisplayHeight(dpy, screen))
-		y = DisplayHeight(dpy, screen) - h;
+	p.y -= cur * high + high / 2;
+	if(p.y < 0)
+		p.y = 0;
+	else if(p.y + h > Dy(scr.rect))
+		p.y = Dy(scr.rect) - h;
 
-	wa.override_redirect = True;
-	wa.border_pixel = border;
-	wa.background_pixel = normbg;
-	menuwin = XCreateWindow(dpy, root, x, y, wide, h,
-				1, DefaultDepth(dpy, screen), CopyFromParent,
-				DefaultVisual(dpy, screen),
-				  CWOverrideRedirect
-				| CWBackPixel
-				| CWBorderPixel
-				| CWEventMask,
-				&wa);
+	reshapewin(menuwin, rectaddpt(r, p));
 
-	XSetCommand(dpy, menuwin, g_argv, g_argc);
+	//XSetWindowBackground(display, menuwin->xid, cnorm.bg);
+	setborder(menuwin, 1, cnorm.border);
 }
 
 /* redraw --- actually redraw the menu */
@@ -373,22 +276,21 @@ create_window(int wide, int high)
 void
 redraw(int high, int wide)
 {
-	int tx, ty, i;
+	Rectangle r;
+	CTuple *c;
+	int i;
 
+	r = Rect(0, 0, wide, high);
 	for(i = 0; i < numitems; i++) {
-		tx = (wide - XTextWidth(font, labels[i], strlen(labels[i]))) / 2;
-		ty = i*high + font->ascent + 1;
 		if(cur == i)
-			XSetForeground(dpy, gc, selbg);
+			c = &csel;
 		else
-			XSetForeground(dpy, gc, normbg);
-		XFillRectangle(dpy, menuwin, gc, 0, i*high, wide, high);
-		if(cur == i)
-			XSetForeground(dpy, gc, selfg);
-		else
-			XSetForeground(dpy, gc, normfg);
-		XDrawString(dpy, menuwin, gc, tx, ty, labels[i], strlen(labels[i]));
+			c = &cnorm;
+		r = rectsetorigin(r, Pt(0, i * high));
+		fill(menuwin, r, c->bg);
+		drawstring(menuwin, font, r, Center, labels[i], c->fg);
 	}
+	drawstring(menuwin, font, Rect(0, 0, 15, 15), West, "foo", cnorm.fg);
 }
 
 /* warpmouse --- bring the mouse to the menu */
@@ -396,12 +298,16 @@ redraw(int high, int wide)
 void
 warpmouse(int wide, int high)
 {
+	Point p;
 	int offset;
 
 	/* move tip of pointer into middle of menu item */
-	offset = (font->ascent + font->descent + 1) / 2;
+	offset = labelh(font) / 2;
 	offset += 6;	/* fudge factor */
 
-	XWarpPointer(dpy, None, menuwin, 0, 0, 0, 0,
-				wide/2, cur*high-high/2+offset);
+	p = Pt(wide / 2, cur*high - high/2 + offset);
+	p = addpt(p, menuwin->r.min);
+
+	warppointer(p);
 }
+

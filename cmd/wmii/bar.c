@@ -1,4 +1,4 @@
-/* Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -14,20 +14,24 @@ void
 bar_init(WMScreen *s) {
 	WinAttr wa;
 
+	if(s->barwin) {
+		bar_resize(s);
+		return;
+	}
+
 	s->brect = s->r;
 	s->brect.min.y = s->brect.max.y - labelh(def.font);
 
 	wa.override_redirect = 1;
 	wa.background_pixmap = ParentRelative;
-	wa.event_mask =
-		  ExposureMask
-		| ButtonPressMask
-		| ButtonReleaseMask
-		| FocusChangeMask;
-	s->barwin = createwindow(&scr.root, s->brect, scr.depth, InputOutput, &wa,
-			  CWOverrideRedirect
-			| CWBackPixmap
-			| CWEventMask);
+	wa.event_mask = ExposureMask
+		      | ButtonPressMask
+		      | ButtonReleaseMask
+		      | FocusChangeMask;
+	s->barwin = createwindow(&scr.root, s->brect, scr.depth, InputOutput,
+			&wa, CWOverrideRedirect
+			   | CWBackPixmap
+			   | CWEventMask);
 	s->barwin->aux = s;
 	xdnd_initwindow(s->barwin);
 	sethandler(s->barwin, &handlers);
@@ -36,45 +40,40 @@ bar_init(WMScreen *s) {
 
 void
 bar_resize(WMScreen *s) {
-	View *v;
 
 	s->brect = s->r;
-	s->brect.min.y = s->brect.max.y - labelh(def.font);
-
+	s->brect.min.y = s->r.max.y - labelh(def.font);
 	reshapewin(s->barwin, s->brect);
-
-	bar_draw(s);
-	for(v=view; v; v=v->next)
-		view_arrange(v);
+	/* FIXME: view_arrange. */
 }
 
 void
-bar_setbounds(int left, int right) {
+bar_setbounds(WMScreen *s, int left, int right) {
 	Rectangle *r;
 
-	r = &screen->brect;
+	r = &s->brect;
 	r->min.x = left;
 	r->max.x = right;
-	reshapewin(screen->barwin, *r);
+	reshapewin(s->barwin, *r);
 }
 
 void
-bar_sety(int y) {
+bar_sety(WMScreen *s, int y) {
 	Rectangle *r;
 	int dy;
 
-	r = &screen->brect;
+	r = &s->brect;
 
-	dy = y - r->min.y;
-	r->min.y += dy;
-	r->max.y += dy;
-	reshapewin(screen->barwin, *r);
+	dy = Dy(*r);
+	r->min.y = y;
+	r->max.y = y + dy;
+	reshapewin(s->barwin, *r);
 }
 
 Bar*
 bar_create(Bar **bp, const char *name) {
 	static uint id = 1;
-	WMScreen *s;
+	WMScreen *s, **sp;
 	Bar *b;
 	uint i;
 
@@ -87,18 +86,23 @@ bar_create(Bar **bp, const char *name) {
 	utflcpy(b->name, name, sizeof b->name);
 	b->col = def.normcolor;
 
+	strlcat(b->buf, b->col.colstr, sizeof(b->buf));
+	strlcat(b->buf, " ", sizeof(b->buf));
+	strlcat(b->buf, b->text, sizeof(b->buf));
+	
+	for(sp=screens; (s = *sp); sp++) {
+		i = bp - s->bar;
+		if(i < nelem(s->bar))
+			break;
+	}
+	b->bar = i;
+	b->screen = s;
+
 	for(; *bp; bp = &bp[0]->next)
 		if(strcmp(bp[0]->name, name) >= 0)
 			break;
 	b->next = *bp;
 	*bp = b;
-	
-	/* FIXME: Kludge. */
-	for(s=screens; s < screens+num_screens; s++) {
-		i = bp - s->bar;
-		if(i < nelem(s->bar))
-			b->bar = i;
-	}
 
 	return b;
 }
@@ -122,7 +126,7 @@ bar_draw(WMScreen *s) {
 	float shrink;
 
 	largest = nil;
-	tw = width = 0;
+	width = 0;
 	foreach_bar(s, b) {
 		b->r.min = ZP;
 		b->r.max.y = Dy(s->brect);
@@ -136,18 +140,20 @@ bar_draw(WMScreen *s) {
 		foreach_bar(s, b) {
 			for(pb=&largest; *pb; pb=&pb[0]->smaller)
 				if(Dx(pb[0]->r) < Dx(b->r))
-					break; 
+					break;
 			b->smaller = *pb;
 			*pb = b;
 		}
 		SET(shrink);
+		tw = 0;
 		for(tb=largest; tb; tb=tb->smaller) {
 			width -= Dx(tb->r);
 			tw += Dx(tb->r);
 			shrink = (Dx(s->brect) - width) / (float)tw;
-			if(tb->smaller)
-				if(Dx(tb->r) * shrink >= Dx(tb->smaller->r))
-					break;
+			if(tb->smaller && Dx(tb->r) * shrink < Dx(tb->smaller->r))
+				continue;
+			if(width + (int)(tw * shrink) <= Dx(s->brect))
+				break;
 		}
 		if(tb)
 			for(b=largest; b != tb->smaller; b=b->smaller)
@@ -165,24 +171,48 @@ bar_draw(WMScreen *s) {
 	}
 
 	r = rectsubpt(s->brect, s->brect.min);
-	fill(screen->ibuf, r, def.normcolor.bg);
+	fill(disp.ibuf, r, def.normcolor.bg);
+	border(disp.ibuf, r, 1, def.normcolor.border);
 	foreach_bar(s, b) {
 		align = Center;
 		if(b == s->bar[BRight])
 			align = East;
-		fill(screen->ibuf, b->r, b->col.bg);
-		drawstring(screen->ibuf, def.font, b->r, align, b->text, b->col.fg);
-		border(screen->ibuf, b->r, 1, b->col.border);
+		fill(disp.ibuf, b->r, b->col.bg);
+		drawstring(disp.ibuf, def.font, b->r, align, b->text, b->col.fg);
+		border(disp.ibuf, b->r, 1, b->col.border);
 	}
-	copyimage(s->barwin, r, screen->ibuf, ZP);
-	sync();
+	copyimage(s->barwin, r, disp.ibuf, ZP);
+}
+
+void
+bar_load(Bar *b) {
+	 IxpMsg m;
+	 char *p, *q;
+
+	 p = b->buf;
+	 m = ixp_message(p, strlen(p), 0);
+	 msg_parsecolors(&m, &b->col);
+
+	 q = (char*)m.end-1;
+	 while(q >= (char*)m.pos && *q == '\n')
+		 *q-- = '\0';
+
+	 q = b->text;
+	 utflcpy(q, (char*)m.pos, sizeof b->text);
+
+	 p[0] = '\0';
+	 strlcat(p, b->col.colstr, sizeof b->buf);
+	 strlcat(p, " ", sizeof b->buf);
+	 strlcat(p, b->text, sizeof b->buf);
+
+	 bar_draw(b->screen);
 }
 
 Bar*
 bar_find(Bar *bp, const char *name) {
 	Bar *b;
 
-	for(b = bp; b; b = b->next)
+	for(b=bp; b; b=b->next)
 		if(!strcmp(b->name, name))
 			break;
 	return b;
@@ -246,7 +276,7 @@ dndmotion_event(Window *w, Point p) {
 static void
 expose_event(Window *w, XExposeEvent *e) {
 	USED(w, e);
-	bar_draw(screen);
+	bar_draw(w->aux);
 }
 
 static Handlers handlers = {

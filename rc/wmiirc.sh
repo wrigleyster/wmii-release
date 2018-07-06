@@ -1,4 +1,4 @@
-#!/bin/sh -f
+#!BINSH -f
 # Configure wmii
 wmiiscript=wmiirc # For wmii.sh
 . wmii.sh
@@ -22,9 +22,11 @@ WMII_BACKGROUND='#333333'
 WMII_FONT='-*-fixed-medium-r-*-*-13-*-*-*-*-*-*-*'
 
 set -- $(echo $WMII_NORMCOLORS $WMII_FOCUSCOLORS)
-WMII_MENU='dmenu -b -fn "$WMII_FONT" -nf '"'$1' -nb '$2' -sf '$4' -sb '$5'"
-WMII_9MENU='wmii9menu -font "$WMII_FONT" -nf '"'$1' -nb '$2' -sf '$4' -sb '$5' -br '$6'"
 WMII_TERM="xterm"
+
+# Menu history
+hist="${WMII_CONFPATH%%:*}/history"
+histnum=5000
 
 # Column Rules
 wmiir write /colrules <<!
@@ -42,10 +44,14 @@ status() {
 	echo -n $(uptime | sed 's/.*://; s/,//g') '|' $(date)
 }
 
+local_events() { true;}
+wi_runconf -s wmiirc_local
+
 echo $WMII_NORMCOLORS | wmiir create $noticebar
 
 # Event processing
-wi_events -s '	' <<'!'
+events() {
+	cat <<'!'
 	# Events
 	Event CreateTag
 		echo "$WMII_NORMCOLORS" "$@" | wmiir create "/lbar/$@"
@@ -64,19 +70,6 @@ wi_events -s '	' <<'!'
 	Event LeftBarClick LeftBarDND
 		shift
 		wmiir xwrite /ctl view "$@"
-	Event ClientMouseDown
-		client=$1; button=$2
-		case "$button" in
-		3)
-			do=$(wi_9menu -initial "$menulast" Nop Delete Fullscreen)
-			case "$do" in
-			Delete)
-				wmiir xwrite /client/$client/ctl kill;;
-			Fullscreen)
-				wmiir xwrite /client/$client/ctl Fullscreen on;;
-			esac
-			menulast=${do:-"$menulast"}
-		esac
 	Event Unresponsive
 		{
 			client=$1; shift
@@ -94,6 +87,33 @@ wi_events -s '	' <<'!'
 		kill $xpid 2>/dev/null # Let's hope this isn't reused...
 		{ sleep $noticetimeout; wmiir xwrite $noticebar ' '; }&
 		xpid = $!
+	Menu Client-3-Delete
+		wmiir xwrite /client/$1/ctl kill
+	Menu Client-3-Kill
+		wmiir xwrite /client/$1/ctl slay
+	Menu Client-3-Fullscreen
+		wmiir xwrite /client/$1/ctl Fullscreen on
+	Event ClientMouseDown
+		wi_fnmenu Client $2 $1 &
+	Menu LBar-3-Delete
+		tag=$1; clients=$(wmiir read "/tag/$tag/index" | awk '/[^#]/{print $2}')
+		for c in $clients; do
+			if [ "$tag" = "$(wmiir read /client/$c/tags)" ]; then
+				wmiir xwrite /client/$c/ctl kill
+			else
+				wmiir xwrite /client/$c/tags -$tag
+			fi
+			if [ "$tag" = "$(wi_seltag)" ]; then
+				newtag=$(wi_tags | awk -v't='$tag '
+					$1 == t { if(!l) getline l
+						  print l
+						  exit }
+					{ l = $0 }')
+				wmiir xwrite /ctl view $newtag
+			fi
+		done
+	Event LeftBarMouseDown
+		wi_fnmenu LBar "$@" &
 	# Actions
 	Action quit
 		wmiir xwrite /ctl quit
@@ -123,19 +143,19 @@ wi_events -s '	' <<'!'
 	Key $MODKEY-space
 		wmiir xwrite /tag/sel/ctl select toggle
 	Key $MODKEY-d
-		wmiir xwrite /tag/sel/ctl colmode sel default
+		wmiir xwrite /tag/sel/ctl colmode sel default-max
 	Key $MODKEY-s
-		wmiir xwrite /tag/sel/ctl colmode sel stack
+		wmiir xwrite /tag/sel/ctl colmode sel stack-max
 	Key $MODKEY-m
-		wmiir xwrite /tag/sel/ctl colmode sel max
+		wmiir xwrite /tag/sel/ctl colmode sel stack+max
 	Key $MODKEY-a
-		Action $(wi_actions | wi_menu) &
+		action $(wi_actions | wimenu -h "${hist}.actions" -n $histnum) &
 	Key $MODKEY-p
-		wmiir setsid "$(wi_menu <$progsfile)" &
+		eval wmiir setsid "$(wimenu -h "${hist}.progs" -n $histnum <$progsfile)" &
 	Key $MODKEY-t
-		wmiir xwrite /ctl view $(wi_tags | wi_menu) &
+		(tag=$(wi_tags | wimenu -h "${hist}.tags" -n 50) && wmiir xwrite /ctl view $tag) &
 	Key $MODKEY-Return
-		eval $WMII_TERM &
+		eval wmiir setsid $WMII_TERM &
 	Key $MODKEY-Shift-space
 		wmiir xwrite /tag/sel/ctl send sel toggle
 	Key $MODKEY-f
@@ -143,7 +163,8 @@ wi_events -s '	' <<'!'
 	Key $MODKEY-Shift-c
 		wmiir xwrite /client/sel/ctl kill
 	Key $MODKEY-Shift-t
-		wmiir xwrite "/client/$(wmiir read /client/sel/ctl)/tags" $(wi_tags | wi_menu) &
+		c=$(wi_selclient)
+		(tag=$(wi_tags | wimenu -h "${hist}.tags" -n 50) && wmiir xwrite /client/$c/tags $tag) &
 	Key $MODKEY-$LEFT
 		wmiir xwrite /tag/sel/ctl select left
 	Key $MODKEY-$RIGHT
@@ -152,6 +173,10 @@ wi_events -s '	' <<'!'
 		wmiir xwrite /tag/sel/ctl select down
 	Key $MODKEY-$UP
 		wmiir xwrite /tag/sel/ctl select up
+	Key $MODKEY-Control-$DOWN
+		wmiir xwrite /tag/sel/ctl select down stack
+	Key $MODKEY-Control-$UP
+		wmiir xwrite /tag/sel/ctl select up stack
 	Key $MODKEY-Shift-$LEFT
 		wmiir xwrite /tag/sel/ctl send sel left
 	Key $MODKEY-Shift-$RIGHT
@@ -162,17 +187,22 @@ wi_events -s '	' <<'!'
 		wmiir xwrite /tag/sel/ctl send sel up
 !
 	for i in 0 1 2 3 4 5 6 7 8 9; do
-		wi_events -s '	' <<!
+		cat <<!
 	Key $MODKEY-$i
 		wmiir xwrite /ctl view "$i"
 	Key $MODKEY-Shift-$i
 		wmiir xwrite /client/sel/tags "$i"
 !
 	done
+}
+wi_events <<!
+$(events | sed 's/^	\|^        //')
+$(local_events)
+!
+unset events local_events
 
 # WM Configuration
 wmiir write /ctl <<!
-	view 1
 	font $WMII_FONT
 	focuscolors $WMII_FOCUSCOLORS
 	normcolors $WMII_NORMCOLORS
@@ -181,19 +211,19 @@ wmiir write /ctl <<!
 !
 xsetroot -solid "$WMII_BACKGROUND" &
 
-export WMII_MENU WMII_9MENU WMII_FONT WMII_TERM
+export WMII_FONT WMII_TERM
 export WMII_FOCUSCOLORS WMII_SELCOLORS WMII_NORMCOLORS
 
 # Misc
-progsfile="$WMII_NS_DIR/.proglist"
-Action status &
+progsfile="$(wmiir namespace)/.proglist"
+action status &
 wi_proglist $PATH >$progsfile &
 
 # Setup Tag Bar
-OIFS="$IFS"; IFS="$wi_nl"
-wmiir rm $(wmiir ls /lbar | sed 's,^,/lbar/,')
+IFS="$wi_nl"
+wmiir rm $(wmiir ls /lbar | sed 's,^,/lbar/,') >/dev/null
 seltag=$(wmiir read /tag/sel/ctl | sed 1q)
-IFS="$OIFS"
+unset IFS
 wi_tags | while read tag
 do
 	if [ "$tag" = "$seltag" ]; then

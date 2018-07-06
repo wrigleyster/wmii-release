@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -51,10 +52,10 @@ static int
 sock_unix(char *address, sockaddr_un *sa, socklen_t *salen) {
 	int fd;
 
-	memset(sa, 0, sizeof(*sa));
+	memset(sa, 0, sizeof *sa);
 
 	sa->sun_family = AF_UNIX;
-	strncpy(sa->sun_path, address, sizeof(sa->sun_path));
+	strncpy(sa->sun_path, address, sizeof sa->sun_path);
 	*salen = SUN_LEN(sa);
 
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -93,7 +94,7 @@ announce_unix(char *file) {
 	if(fd == -1)
 		return fd;
 
-	if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&yes, sizeof(yes)) < 0)
+	if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)&yes, sizeof yes) < 0)
 		goto fail;
 
 	unlink(file);
@@ -122,7 +123,7 @@ alookup(char *host, int announce) {
 	if(port == nil)
 		return nil;
 
-	memset(&hints, 0, sizeof(hints));
+	memset(&hints, 0, sizeof hints);
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 
@@ -244,6 +245,26 @@ lookup(const char *address, addrtab *tab) {
 	free(type);
 	return ret;
 }
+
+/**
+ * Function: ixp_dial
+ * Function: ixp_announce
+ *
+ * Params:
+ *	address - An address on which to connect or listen,
+ *		  specified in the Plan 9 resources
+ *		  specification format
+ *		  (<protocol>!address[!<port>])
+ *
+ * These functions hide some of the ugliness of Berkely
+ * Sockets. ixp_dial connects to the resource at P<address>,
+ * while ixp_announce begins listening on P<address>.
+ *
+ * Returns:
+ *	These functions return file descriptors on success,
+ * and -1 on failure. ixp_errbuf(3) may be inspected on
+ * failure.
+ */
 
 int
 ixp_dial(const char *address) {

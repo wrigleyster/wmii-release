@@ -10,6 +10,12 @@
 
 static void handlereq(Ixp9Req *r);
 
+static void
+_printfcall(Fcall *f) {
+	USED(f);
+}
+void (*ixp_printfcall)(Fcall*) = _printfcall;
+
 static int
 min(int a, int b) {
 	if(a < b)
@@ -73,7 +79,7 @@ static void*
 createfid(Intmap *map, int fid, Ixp9Conn *pc) {
 	Fid *f;
 
-	f = emallocz(sizeof(Fid));
+	f = emallocz(sizeof *f);
 	pc->ref++;
 	f->conn = pc;
 	f->fid = fid;
@@ -116,14 +122,14 @@ handlefcall(IxpConn *c) {
 		goto Fail;
 	thread->unlock(&pc->rlock);
 
-	req = emallocz(sizeof(Ixp9Req));
+	req = emallocz(sizeof *req);
 	pc->ref++;
 	req->conn = pc;
 	req->srv = pc->srv;
 	req->ifcall = fcall;
 	pc->conn = c;
 
-	if(caninsertkey(&pc->tagmap, fcall.tag, req) == 0) {
+	if(caninsertkey(&pc->tagmap, fcall.hdr.tag, req) == 0) {
 		respond(req, Eduptag);
 		return;
 	}
@@ -145,22 +151,24 @@ handlereq(Ixp9Req *r) {
 	pc = r->conn;
 	srv = pc->srv;
 
-	switch(r->ifcall.type) {
+	ixp_printfcall(&r->ifcall);
+
+	switch(r->ifcall.hdr.type) {
 	default:
 		respond(r, Enofunc);
 		break;
 	case TVersion:
-		if(!strcmp(r->ifcall.version, "9P"))
-			r->ofcall.version = "9P";
-		else if(!strcmp(r->ifcall.version, "9P2000"))
-			r->ofcall.version = "9P2000";
+		if(!strcmp(r->ifcall.version.version, "9P"))
+			r->ofcall.version.version = "9P";
+		else if(!strcmp(r->ifcall.version.version, "9P2000"))
+			r->ofcall.version.version = "9P2000";
 		else
-			r->ofcall.version = "unknown";
-		r->ofcall.msize = r->ifcall.msize;
+			r->ofcall.version.version = "unknown";
+		r->ofcall.version.msize = r->ifcall.version.msize;
 		respond(r, nil);
 		break;
 	case TAttach:
-		if(!(r->fid = createfid(&pc->fidmap, r->ifcall.fid, pc))) {
+		if(!(r->fid = createfid(&pc->fidmap, r->ifcall.hdr.fid, pc))) {
 			respond(r, Edupfid);
 			return;
 		}
@@ -168,7 +176,7 @@ handlereq(Ixp9Req *r) {
 		srv->attach(r);
 		break;
 	case TClunk:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -179,7 +187,7 @@ handlereq(Ixp9Req *r) {
 		srv->clunk(r);
 		break;
 	case TFlush:
-		if(!(r->oldreq = lookupkey(&pc->tagmap, r->ifcall.oldtag))) {
+		if(!(r->oldreq = lookupkey(&pc->tagmap, r->ifcall.tflush.oldtag))) {
 			respond(r, Enotag);
 			return;
 		}
@@ -190,7 +198,7 @@ handlereq(Ixp9Req *r) {
 		srv->flush(r);
 		break;
 	case TCreate:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -209,15 +217,15 @@ handlereq(Ixp9Req *r) {
 		pc->srv->create(r);
 		break;
 	case TOpen:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
-		if((r->fid->qid.type&QTDIR) && (r->ifcall.mode|P9_ORCLOSE) != (P9_OREAD|P9_ORCLOSE)) {
+		if((r->fid->qid.type&QTDIR) && (r->ifcall.topen.mode|P9_ORCLOSE) != (P9_OREAD|P9_ORCLOSE)) {
 			respond(r, Eisdir);
 			return;
 		}
-		r->ofcall.qid = r->fid->qid;
+		r->ofcall.ropen.qid = r->fid->qid;
 		if(!pc->srv->open) {
 			respond(r, Enofunc);
 			return;
@@ -225,7 +233,7 @@ handlereq(Ixp9Req *r) {
 		pc->srv->open(r);
 		break;
 	case TRead:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -240,7 +248,7 @@ handlereq(Ixp9Req *r) {
 		pc->srv->read(r);
 		break;
 	case TRemove:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -251,7 +259,7 @@ handlereq(Ixp9Req *r) {
 		pc->srv->remove(r);
 		break;
 	case TStat:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -262,7 +270,7 @@ handlereq(Ixp9Req *r) {
 		pc->srv->stat(r);
 		break;
 	case TWalk:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -270,12 +278,12 @@ handlereq(Ixp9Req *r) {
 			respond(r, "cannot walk from an open fid");
 			return;
 		}
-		if(r->ifcall.nwname && !(r->fid->qid.type&QTDIR)) {
+		if(r->ifcall.twalk.nwname && !(r->fid->qid.type&QTDIR)) {
 			respond(r, Enotdir);
 			return;
 		}
-		if((r->ifcall.fid != r->ifcall.newfid)) {
-			if(!(r->newfid = createfid(&pc->fidmap, r->ifcall.newfid, pc))) {
+		if((r->ifcall.hdr.fid != r->ifcall.twalk.newfid)) {
+			if(!(r->newfid = createfid(&pc->fidmap, r->ifcall.twalk.newfid, pc))) {
 				respond(r, Edupfid);
 				return;
 			}
@@ -288,7 +296,7 @@ handlereq(Ixp9Req *r) {
 		pc->srv->walk(r);
 		break;
 	case TWrite:
-		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.fid))) {
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
 			respond(r, Enofid);
 			return;
 		}
@@ -302,7 +310,34 @@ handlereq(Ixp9Req *r) {
 		}
 		pc->srv->write(r);
 		break;
-	/* Still to be implemented: wstat, auth */
+	case TWStat:
+		if(!(r->fid = lookupkey(&pc->fidmap, r->ifcall.hdr.fid))) {
+			respond(r, Enofid);
+			return;
+		}
+		if((ushort)~r->ifcall.twstat.stat.type) {
+			respond(r, "wstat of type");
+			return;
+		}
+		if((uint)~r->ifcall.twstat.stat.dev) {
+			respond(r, "wstat of dev");
+			return;
+		}
+		if((uchar)~r->ifcall.twstat.stat.qid.type || (ulong)~r->ifcall.twstat.stat.qid.version || (uvlong)~r->ifcall.twstat.stat.qid.path) {
+			respond(r, "wstat of qid");
+			return;
+		}
+		if(r->ifcall.twstat.stat.muid && r->ifcall.twstat.stat.muid[0]) {
+			respond(r, "wstat of muid");
+			return;
+		}
+		if((ulong)~r->ifcall.twstat.stat.mode && ((r->ifcall.twstat.stat.mode&DMDIR)>>24) != r->fid->qid.type&QTDIR) {
+			respond(r, "wstat on DMDIR bit");
+			return;
+		}
+		pc->srv->wstat(r);
+		break;
+	/* Still to be implemented: auth */
 	}
 }
 
@@ -313,58 +348,58 @@ respond(Ixp9Req *r, const char *error) {
 
 	pc = r->conn;
 
-	switch(r->ifcall.type) {
+	switch(r->ifcall.hdr.type) {
 	default:
 		if(!error)
 			assert(!"Respond called on unsupported fcall type");
 		break;
 	case TVersion:
 		assert(error == nil);
-		free(r->ifcall.version);
+		free(r->ifcall.version.version);
 
 		thread->lock(&pc->rlock);
 		thread->lock(&pc->wlock);
-		msize = min(r->ofcall.msize, IXP_MAX_MSG);
+		msize = min(r->ofcall.version.msize, IXP_MAX_MSG);
 		pc->rmsg.data = erealloc(pc->rmsg.data, msize);
 		pc->wmsg.data = erealloc(pc->wmsg.data, msize);
 		pc->rmsg.size = msize;
 		pc->wmsg.size = msize;
 		thread->unlock(&pc->wlock);
 		thread->unlock(&pc->rlock);
-		r->ofcall.msize = msize;
+		r->ofcall.version.msize = msize;
 		break;
 	case TAttach:
 		if(error)
 			destroyfid(pc, r->fid->fid);
-		free(r->ifcall.uname);
-		free(r->ifcall.aname);
+		free(r->ifcall.tattach.uname);
+		free(r->ifcall.tattach.aname);
 		break;
 	case TOpen:
 	case TCreate:
 		if(!error) {
-			r->ofcall.iounit = pc->rmsg.size - 24;
-			r->fid->iounit = r->ofcall.iounit;
-			r->fid->omode = r->ifcall.mode;
-			r->fid->qid = r->ofcall.qid;
+			r->ofcall.ropen.iounit = pc->rmsg.size - 24;
+			r->fid->iounit = r->ofcall.ropen.iounit;
+			r->fid->omode = r->ifcall.topen.mode;
+			r->fid->qid = r->ofcall.ropen.qid;
 		}
-		free(r->ifcall.name);
+		free(r->ifcall.tcreate.name);
 		break;
 	case TWalk:
-		if(error || r->ofcall.nwqid < r->ifcall.nwname) {
-			if(r->ifcall.fid != r->ifcall.newfid && r->newfid)
+		if(error || r->ofcall.rwalk.nwqid < r->ifcall.twalk.nwname) {
+			if(r->ifcall.hdr.fid != r->ifcall.twalk.newfid && r->newfid)
 				destroyfid(pc, r->newfid->fid);
-			if(!error && r->ofcall.nwqid == 0)
+			if(!error && r->ofcall.rwalk.nwqid == 0)
 				error = Enofile;
 		}else{
-			if(r->ofcall.nwqid == 0)
+			if(r->ofcall.rwalk.nwqid == 0)
 				r->newfid->qid = r->fid->qid;
 			else
-				r->newfid->qid = r->ofcall.wqid[r->ofcall.nwqid-1];
+				r->newfid->qid = r->ofcall.rwalk.wqid[r->ofcall.rwalk.nwqid-1];
 		}
-		free(*r->ifcall.wname);
+		free(*r->ifcall.twalk.wname);
 		break;
 	case TWrite:
-		free(r->ifcall.data);
+		free(r->ifcall.twrite.data);
 		break;
 	case TRemove:
 		if(r->fid)
@@ -375,25 +410,28 @@ respond(Ixp9Req *r, const char *error) {
 			destroyfid(pc, r->fid->fid);
 		break;
 	case TFlush:
-		if((r->oldreq = lookupkey(&pc->tagmap, r->ifcall.oldtag)))
+		if((r->oldreq = lookupkey(&pc->tagmap, r->ifcall.tflush.oldtag)))
 			respond(r->oldreq, Eintr);
+		break;
+	case TWStat:
+		ixp_freestat(&r->ifcall.twstat.stat);
 		break;
 	case TRead:
 	case TStat:
-		break;
-	/* Still to be implemented: wstat, auth */
+		break;		
+	/* Still to be implemented: auth */
 	}
 
-	r->ofcall.tag = r->ifcall.tag;
+	r->ofcall.hdr.tag = r->ifcall.hdr.tag;
 
 	if(error == nil)
-		r->ofcall.type = r->ifcall.type + 1;
+		r->ofcall.hdr.type = r->ifcall.hdr.type + 1;
 	else {
-		r->ofcall.type = RError;
-		r->ofcall.ename = (char*)error;
+		r->ofcall.hdr.type = RError;
+		r->ofcall.error.ename = (char*)error;
 	}
 
-	deletekey(&pc->tagmap, r->ifcall.tag);;
+	deletekey(&pc->tagmap, r->ifcall.hdr.tag);;
 
 	if(pc->conn) {
 		thread->lock(&pc->wlock);
@@ -403,12 +441,12 @@ respond(Ixp9Req *r, const char *error) {
 		thread->unlock(&pc->wlock);
 	}
 
-	switch(r->ofcall.type) {
+	switch(r->ofcall.hdr.type) {
 	case RStat:
-		free(r->ofcall.stat);
+		free(r->ofcall.rstat.stat);
 		break;
 	case RRead:
-		free(r->ofcall.data);
+		free(r->ofcall.rread.data);
 		break;
 	}
 	free(r);
@@ -425,10 +463,10 @@ voidrequest(void *t) {
 	pc = r->conn;
 	pc->ref++;
 
-	tr = emallocz(sizeof(Ixp9Req));
-	tr->ifcall.type = TFlush;
-	tr->ifcall.tag = IXP_NOTAG;
-	tr->ifcall.oldtag = r->ifcall.tag;
+	tr = emallocz(sizeof *tr);
+	tr->ifcall.hdr.type = TFlush;
+	tr->ifcall.hdr.tag = IXP_NOTAG;
+	tr->ifcall.tflush.oldtag = r->ifcall.hdr.tag;
 	tr->conn = pc;
 	handlereq(tr);
 }
@@ -444,10 +482,10 @@ voidfid(void *t) {
 	pc = f->conn;
 	pc->ref++;
 
-	tr = emallocz(sizeof(Ixp9Req));
-	tr->ifcall.type = TClunk;
-	tr->ifcall.tag = IXP_NOTAG;
-	tr->ifcall.fid = f->fid;
+	tr = emallocz(sizeof *tr);
+	tr->ifcall.hdr.type = TClunk;
+	tr->ifcall.hdr.tag = IXP_NOTAG;
+	tr->ifcall.hdr.fid = f->fid;
 	tr->fid = f;
 	tr->conn = pc;
 	handlereq(tr);
@@ -476,7 +514,7 @@ serve_9pcon(IxpConn *c) {
 	if(fd < 0)
 		return;
 
-	pc = emallocz(sizeof(Ixp9Conn));
+	pc = emallocz(sizeof *pc);
 	pc->ref++;
 	pc->srv = c->aux;
 	pc->rmsg.size = 1024;

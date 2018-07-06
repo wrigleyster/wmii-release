@@ -62,7 +62,7 @@ sendrpc(IxpRpc *r, Fcall *f)
 	/* assign the tag, add selves to response queue */
 	thread->lock(&mux->lk);
 	r->tag = gettag(mux, r);
-	f->tag = r->tag;
+	f->hdr.tag = r->tag;
 	enqueue(mux, r);
 	thread->unlock(&mux->lk);
 
@@ -88,7 +88,7 @@ muxrecv(IxpClient *mux)
 	thread->lock(&mux->rlock);
 	if(ixp_recvmsg(mux->fd, &mux->rmsg) == 0)
 		goto fail;
-	f = emallocz(sizeof(Fcall));
+	f = emallocz(sizeof *f);
 	if(ixp_msg2fcall(&mux->rmsg, f) == 0) {
 		free(f);
 		f = nil;
@@ -104,11 +104,11 @@ dispatchandqlock(IxpClient *mux, Fcall *f)
 	int tag;
 	IxpRpc *r2;
 
-	tag = f->tag - mux->mintag;
+	tag = f->hdr.tag - mux->mintag;
 	thread->lock(&mux->lk);
 	/* hand packet to correct sleeper */
 	if(tag < 0 || tag >= mux->mwait) {
-		fprintf(stderr, "libixp: recieved unfeasible tag: %d (min: %d, max: %d)\n", f->tag, mux->mintag, mux->mintag+mux->mwait);
+		fprintf(stderr, "libixp: recieved unfeasible tag: %d (min: %d, max: %d)\n", f->hdr.tag, mux->mintag, mux->mintag+mux->mwait);
 		goto fail;
 	}
 	r2 = mux->wait[tag];
@@ -214,10 +214,10 @@ gettag(IxpClient *mux, IxpRpc *r)
 					mw = 1;
 				else
 					mw <<= 1;
-				w = realloc(mux->wait, mw*sizeof(w[0]));
+				w = realloc(mux->wait, mw * sizeof *w);
 				if(w == nil)
 					return -1;
-				memset(w+mux->mwait, 0, (mw-mux->mwait)*sizeof(w[0]));
+				memset(w+mux->mwait, 0, (mw-mux->mwait) * sizeof *w);
 				mux->wait = w;
 				mux->freetag = mux->mwait;
 				mux->mwait = mw;

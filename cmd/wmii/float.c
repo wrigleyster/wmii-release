@@ -1,4 +1,4 @@
-/* Copyright ©2006-2008 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -24,30 +24,63 @@ float_attach(Area *a, Frame *f) {
 void
 float_detach(Frame *f) {
 	Frame *pr;
-	Area *a, *sel;
+	Area *a, *sel, *oldsel;
 	View *v;
 
 	v = f->view;
 	a = f->area;
 	sel = view_findarea(v, v->selcol, false);
-	assert(sel || !v->area->next);
+	oldsel = v->oldsel;
 	pr = f->aprev;
 
 	frame_remove(f);
 
-	f->area = nil;
 	if(a->sel == f) {
 		if(!pr)
 			pr = a->frame;
 		a->sel = nil;
 		area_setsel(a, pr);
 	}
+	f->area = nil;
 
-	if(v->oldsel)
-		area_focus(v->oldsel);
+	if(oldsel)
+		area_focus(oldsel);
 	else if(!a->frame)
 		if(sel && sel->frame)
 			area_focus(sel);
+}
+
+void
+float_resizeframe(Frame *f, Rectangle r) {
+
+	if(f->area->view == selview)
+		client_resize(f->client, r);
+	else
+		frame_resize(f, r);
+}
+
+void
+float_arrange(Area *a) {
+	Frame *f;
+
+	assert(a->floating);
+
+	switch(a->mode) {
+	case Coldefault:
+		for(f=a->frame; f; f=f->anext)
+			f->collapsed = false;
+		break;
+	case Colstack:
+		for(f=a->frame; f; f=f->anext)
+			f->collapsed = (f != a->sel);
+		break;
+	default:
+		die("not reached");
+		break;
+	}
+	for(f=a->frame; f; f=f->anext)
+		f->r = f->floatr;
+	view_update(a->view);
 }
 
 static void
@@ -67,82 +100,145 @@ rect_push(Vector_rect *vec, Rectangle r) {
 	vector_rpush(vec, r);
 }
 
+Vector_rect*
+unique_rects(Vector_rect *vec, Rectangle orig) {
+	static Vector_rect vec1, vec2;
+	Vector_rect *v1, *v2, *v;
+	Rectangle r1, r2;
+	int i, j;
+
+	v1 = &vec1;
+	v2 = &vec2;
+	v1->n = 0;
+	vector_rpush(v1, orig);
+	for(i=0; i < vec->n; i++) {
+		v2->n = 0;
+		r1 = vec->ary[i];
+		for(j=0; j < v1->n; j++) {
+			r2 = v1->ary[j];
+			if(!rect_intersect_p(r1, r2)) {
+				rect_push(v2, r2);
+				continue;
+			}
+			if(r2.min.x < r1.min.x)
+				rect_push(v2, Rect(r2.min.x, r2.min.y, r1.min.x, r2.max.y));
+			if(r2.min.y < r1.min.y)
+				rect_push(v2, Rect(r2.min.x, r2.min.y, r2.max.x, r1.min.y));
+			if(r2.max.x > r1.max.x)
+				rect_push(v2, Rect(r1.max.x, r2.min.y, r2.max.x, r2.max.y));
+			if(r2.max.y > r1.max.y)
+				rect_push(v2, Rect(r2.min.x, r1.max.y, r2.max.x, r2.max.y));
+		}
+		v = v1;
+		v1 = v2;
+		v2 = v;
+	}
+	return v1;
+}
+
+Rectangle
+max_rect(Vector_rect *vec) {
+	Rectangle *r, *rp;
+	int i, a, area;
+
+	area = 0;
+	r = 0;
+	for(i=0; i < vec->n; i++) {
+		rp = &vec->ary[i];
+		a = Dx(*rp) * Dy(*rp);
+		if(a > area) {
+			area = a;
+			r = rp;
+		}
+	}
+	return r ? *r : ZR;
+}
+
 static void
 float_placeframe(Frame *f) {
-	static Vector_rect rvec, rvec2;
-	Vector_rect *vp, *vp2, *vptemp;
-	Rectangle *rp;
-	Rectangle r, fr;
+	static Vector_rect vec;
+	Vector_rect *vp;
+	Rectangle r;
 	Point dim, p;
 	Client *c;
 	Frame *ff;
-	Area *a;
+	Area *a, *sel;
 	long area, l;
-	int i;
+	int i, s;
 
 	a = f->area;
 	c = f->client;
 
+	/*
 	if(c->trans)
 		return;
-	if(c->fullscreen || c->w.hints->position || starting) {
-		f->r = client_grav(c, c->r);
+	*/
+
+	if(c->fullscreen >= 0 || c->w.hints->position || starting) {
+		f->r = f->floatr;
 		return;
 	}
 
+	/* Find all rectangles on the floating layer into which
+	 * the new frame would fit.
+	 */
+	vec.n = 0;
+	for(ff=a->frame; ff; ff=ff->anext)
+		/* TODO: Find out why this check is needed.
+		 * The frame hasn't been inserted yet, but somehow,
+		 * its old rectangle winds up in the list.
+		 */
+		if(ff->client != f->client)
+			vector_rpush(&vec, ff->r);
+
+	/* Decide which screen we want to place this on.
+	 * Ideally, it should probably Do the Right Thing
+	 * when a screen fills, but what's the right thing?
+	 * I think usage will show...
+	 */
+	s = -1;
+	ff = client_groupframe(c, f->view);
+	if (ff)
+		s = ownerscreen(ff->r);
+	else if (selclient())
+		s = ownerscreen(selclient()->sel->r);
+	else {
+		sel = view_findarea(a->view, a->view->selcol, false);
+		if (sel)
+			s = sel->screen;
+	}
+
+	r = a->r;
+	if (s > -1)
+		r = screens[s]->r;
+	vp = unique_rects(&vec, r);
+
+	area = LONG_MAX;
 	dim.x = Dx(f->r);
 	dim.y = Dy(f->r);
+	p = ZP;
 
-	rvec.n = 0;
-	rvec2.n = 0;
-	vp = &rvec;
-	vp2 = &rvec2;
-
-	/* Find all rectangles on the floating layer into which
-	 * the new frame would fit. (Please ignore the man behind
-	 * the curtain).
-	 */
-	vector_rpush(vp, a->r);
-	for(ff=a->frame; ff; ff=ff->anext) {
-		fr = ff->r;
-		vp2->n = 0;
-		for(i=0; i < vp->n; i++) {
-			r = vp->ary[i];
-			if(!rect_intersect_p(fr, r)) {
-				rect_push(vp2, r);
-				continue;
-			}
-			if(r.min.x < fr.min.x && fr.min.x - r.min.x >= dim.x)
-				rect_push(vp2, Rect(r.min.x, r.min.y, fr.min.x, r.max.y));
-			if(r.max.x > fr.max.x && r.max.x - fr.max.x >= dim.x)
-				rect_push(vp2, Rect(fr.max.x, r.min.y, r.max.x, r.max.y));
-			if(r.min.y < fr.min.y && fr.min.y - r.min.y >= dim.y)
-				rect_push(vp2, Rect(r.min.x, r.min.y, r.max.x, fr.min.y));
-			if(r.max.y > fr.max.y && r.max.y - fr.max.y >= dim.y)
-				rect_push(vp2, Rect(r.min.x, fr.max.y, r.max.x, r.max.y));
-		}
-		vptemp = vp;
-		vp = vp2;
-		vp2 = vptemp;
-	}
-
-	p = ZP; /* SET(p) */
-	if(vp->n == 0) {
-		p.x = random() % max(1, Dx(a->r) - dim.x);
-		p.y = random() % max(1, Dy(a->r) - dim.y);
-	}else {
-		area = LONG_MAX;
-		for(i=0; i < vp->n; i++) {
-			rp = &vp->ary[i];
-			l = Dx(*rp) * Dy(*rp);
-			if(l < area) {
-				area = l;
-				p = rp->min;
-			}
+	for(i=0; i < vp->n; i++) {
+		r = vp->ary[i];
+		if(Dx(r) < dim.x || Dy(r) < dim.y)
+			continue;
+		l = Dx(r) * Dy(r);
+		if(l < area) {
+			area = l;
+			p = r.min;
 		}
 	}
 
-	fr = rectsubpt(f->r, f->r.min);
-	f->r = rectaddpt(fr, p);
+	if(area == LONG_MAX) {
+		/* Cascade. */
+		ff = a->sel;
+		if(ff)
+			p = addpt(ff->r.min, Pt(Dy(ff->titlebar), Dy(ff->titlebar)));
+		if(p.x + Dx(f->r) > Dx(screen->r) ||
+		   p.y + Dy(f->r) > screen->brect.min.y)
+			p = ZP;
+	}
+
+	f->floatr = rectsetorigin(f->r, p);
 }
 
