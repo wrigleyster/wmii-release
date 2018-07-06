@@ -10,7 +10,7 @@ CFLAGS += '-DVERSION=\"$(VERSION)\"' '-DCOPYRIGHT=\"$(COPYRIGHT)\"' \
 FILTER = sed "s|@CONFPREFIX@|$(ETC)|g; \
 	      s|@CONFVERSION@|$(CONFVERSION)|g; \
 	      s|@DOCDIR@|$(DOC)|g; \
-	      s|3.9|$(VERSION)|g; \
+	      s|@VERSION@|$(VERSION)|g; \
 	      s|@LIBDIR@|$(LIBDIR)|g; \
 	      s|@BINSH@|$(BINSH)|g; \
 	      s|@TERMINAL@|$(TERMINAL)|g;"
