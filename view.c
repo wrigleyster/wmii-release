@@ -39,7 +39,7 @@ assign_sel_view(View *v) {
 
 Client *
 sel_client_of_view(View *v) {
-	return v->sel && v->sel->sel ? v->sel->sel->client : NULL;
+	return v->sel && v->sel->sel ? v->sel->sel->client : nil;
 }
 
 View *
@@ -62,7 +62,7 @@ create_view(const char *name) {
 
 	v->id = id++;
 	strncpy(v->name, name, sizeof(v->name));
-	create_area(v, NULL, 0);
+	create_area(v, nil, 0);
 	create_area(v, v->area, 0);
 	v->area->floating = True;
 	for(i=&view; *i; i=&(*i)->next)
@@ -123,7 +123,7 @@ focus_view(WMScreen *s, View *v) {
 						f->rect.y);
 		}
 	if((c = sel_client()))
-		focus_client(c, True);
+		focus_client(c, False);
 	draw_frames();
 	XSync(blz.dpy, False);
 	XUngrabServer(blz.dpy);
@@ -135,10 +135,12 @@ select_view(const char *arg) {
 	char buf[256];
 
 	strncpy(buf, arg, sizeof(buf));
-	trim(buf, " \t+");
+	trim(buf, " \t+/");
 	if(!strlen(buf))
 		return;
-	assign_sel_view(get_view(arg));
+	if(!strncmp(buf, ".", 2) || !strncmp(buf, "..", 3))
+		return;
+	assign_sel_view(get_view(buf));
 	update_views(); /* performs focus_view */
 }
 
@@ -146,17 +148,21 @@ void
 attach_to_view(View *v, Frame *f) {
 	Area *a;
 	Client *c = f->client;
+	unsigned int i;
 
-	c->revert = NULL;
+	c->revert = nil;
+	a = v->sel;
 	if(c->trans || c->floating || c->fixedsize
 		|| (c->rect.width == screen->rect.width && c->rect.height == screen->rect.height))
-		a = v->area;
+		v->sel = v->area;
 	else if(starting && v->sel->floating)
-		a = v->area->next;
-	else
-		a = v->sel;
-	attach_to_area(a, f, False);
-	v->sel = a;
+		v->sel = v->area->next;
+	attach_to_area(v->sel, f, False);
+	if(a != v->sel) {
+		for(a=v->area, i = 0; a && a != v->sel; a=a->next, i++);
+		if(i) write_event("ColumnFocus %d\n", i);
+		else write_event("FocusFloating\n");
+	}
 }
 
 void
@@ -164,26 +170,36 @@ restack_view(View *v) {
 	Area *a;
 	Frame *f;
 	Client *c;
-	unsigned int n=0, i=0;
-	static Window *wins = NULL;
+	unsigned int n, i;
+	static Window *wins = nil;
 	static unsigned int winssz = 0;
 
+	i = 0;
+	n = 1;
+
 	for(c=client; c; c=c->next, i++);
-	if(i > winssz) {
+	if(i >= winssz) {
 		winssz = 2 * i;
 		wins = ixp_erealloc(wins, sizeof(Window) * winssz);
 	}
+
+	wins[0] = screen->barwin;
 	for(a=v->area; a; a=a->next) {
 		if(a->frame) {
+			if(a == v->area) {
+				Frame **tf;
+				for(tf=&a->frame; *tf; tf=&(*tf)->anext)
+					if(*tf == a->sel) break;
+				*tf = a->sel->anext;
+				a->sel->anext = a->frame;
+				a->frame = a->sel;
+			}
 			wins[n++] = a->sel->client->framewin;
-			for(f=a->frame; f; f=f->anext)
-				if(f != a->sel) n++;
-			i=n;
 			for(f=a->frame; f; f=f->anext) {
 				Client *c = f->client;
 				update_client_grab(c, (v->sel == a) && (a->sel == f));
 				if(f != a->sel)
-					wins[--i] = c->framewin;
+					wins[n++] = c->framewin;
 			}
 		}
 	}
@@ -193,16 +209,21 @@ restack_view(View *v) {
 
 void
 scale_view(View *v, float w) {
-	unsigned int xoff, col_size = 0;
-	unsigned int min_width = screen->rect.width/NCOL;
+	unsigned int xoff, num_col;
+	unsigned int min_width;
 	Area *a;
 	float scale, dx = 0;
 	int wdiff = 0;
 
+	min_width = screen->rect.width/NCOL;
+
 	if(!v->area->next)
 		return;
-	for(a=v->area->next; a; a=a->next, col_size++)
-		dx += a->rect.width;
+
+	num_col = 0;
+	for(a=v->area->next; a; a=a->next)
+		num_col++, dx += a->rect.width;
+
 	scale = w / dx;
 	xoff = 0;
 	for(a=v->area->next; a; a=a->next) {
@@ -211,14 +232,15 @@ scale_view(View *v, float w) {
 			a->rect.width = w - xoff;
 		xoff += a->rect.width;
 	}
-	/* min_width can only be respected when there is enough space; the caller should guarantee this */
-	if(col_size * min_width > w)
+	/* min_width can only be respected when there is enough space;
+	 * the caller should guarantee this */
+	if(num_col * min_width > w)
 		return;
 	xoff = 0;
-	for(a=v->area->next, col_size--; a; a=a->next, col_size--) {
+	for(a=v->area->next, num_col--; a; a=a->next, num_col--) {
 		if(a->rect.width < min_width)
 			a->rect.width = min_width;
-		else if((wdiff = xoff + a->rect.width - w + col_size * min_width) > 0)
+		else if((wdiff = xoff + a->rect.width - w + num_col * min_width) > 0)
 			a->rect.width -= wdiff;
 		if(!a->next)
 			a->rect.width = w - xoff;
@@ -280,13 +302,13 @@ view_index(View *v) {
 		for(f=a->frame; f && len > 0; f=f->anext) {
 			XRectangle *r = &f->rect;
 			if(a->floating)
-				n = snprintf(&buffer[buf_i], len, "~ %d %d %d %d %d %s\n",
-						idx_of_client(f->client),
+				n = snprintf(&buffer[buf_i], len, "~ 0x%x %d %d %d %d %s\n",
+						(unsigned int)f->client->win,
 						r->x, r->y, r->width, r->height,
 						f->client->props);
 			else
-				n = snprintf(&buffer[buf_i], len, "%d %d %d %d %s\n",
-						a_i, idx_of_client(f->client), r->y,
+				n = snprintf(&buffer[buf_i], len, "%d 0x%x %d %d %s\n",
+						a_i, (unsigned int)f->client->win, r->y,
 						r->height, f->client->props);
 			if(len - n < 0)
 				return (unsigned char *)buffer;
@@ -299,16 +321,19 @@ view_index(View *v) {
 
 Client *
 client_of_message(View *v, char *message, unsigned int *next) {              
-	unsigned int i;
+	unsigned long id = 0;
 	Client *c;
 
 	if(!strncmp(message, "sel ", 4)) {
 		*next = 4;
 		return sel_client_of_view(v);
 	}
-	if((1 != sscanf(message, "%d %n", &i, next)))
-		return NULL;
-	for(c=client; i && c; c=c->next, i--);
+	sscanf(message, "0x%lx %n", &id, next);
+	if(!id)
+		sscanf(message, "%lu %n", &id, next);
+	if(!id)
+		return nil;
+    for(c=client; c && c->win!=id; c=c->next);
 	return c;
 }
 
@@ -324,7 +349,7 @@ area_of_message(View *v, char *message, unsigned int *next) {
 	if(!strncmp(message, "~ ", 2))
 		return v->area;
 	if(1 != sscanf(message, "%d %n", &i, next) || i == 0)
-		return NULL;
+		return nil;
 	for(a=v->area; i && a; a=a->next, i--);
 	return a;
 }
@@ -361,7 +386,7 @@ message_view(View *v, char *message) {
 		if(v == screen->sel)
 			focus_view(screen, v);
 		draw_frames();
-		return NULL;
+		return nil;
 	}
 	return Ebadvalue;
 }
@@ -373,8 +398,8 @@ update_views() {
 
 	for(v=view; v; v=v->next)
 		update_frame_selectors(v);
-	if(old && !strncmp(old->name, "NULL", 4))
-		old = NULL;
+	if(old && !strncmp(old->name, "nil", 4))
+		old = nil;
 	for((v=view) && (n=v->next); v; (v=n) && (n=v->next))
 		if((v != old) && is_empty(v))
 			destroy_view(v);

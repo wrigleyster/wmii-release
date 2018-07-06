@@ -13,7 +13,7 @@ create_frame(Client *c, View *v) {
 	f->id = id++;
 	f->client = c;
 	f->view = v;
-	if(c->frame) {
+	if(c->sel) {
 		f->revert = c->sel->revert;
 		f->rect = c->sel->rect;
 	}
@@ -37,10 +37,12 @@ create_frame(Client *c, View *v) {
 
 void
 remove_frame(Frame *f) {
-	Area *a = f->area;
-	Frame **ft = &a->frame;
+	Area *a;
+	Frame **ft;
 
-	for(; *ft && *ft != f; ft=&(*ft)->anext);
+	a = f->area;
+	for(ft = &a->frame; *ft; ft=&(*ft)->anext)
+		if(*ft == f) break;
 	*ft = f->anext;
 }
 
@@ -56,6 +58,50 @@ insert_frame(Frame *pos, Frame *f, Bool before) {
 	Frame **p = pos ? &pos->anext : &a->frame;
 	f->anext = *p;
 	*p = f;
+}
+
+void
+swap_frames(Frame *fa, Frame *fb) {
+	XRectangle trect;
+	Area *a;
+	Frame **fp_a, **fp_b, *ft;
+
+	if(fa == fb) return;
+
+	a = fa->area;
+	for(fp_a = &a->frame; *fp_a; fp_a = &(*fp_a)->anext)
+		if(*fp_a == fa) break;
+	a = fb->area;
+	for(fp_b = &a->frame; *fp_b; fp_b = &(*fp_b)->anext)
+		if(*fp_b == fb) break;
+
+	if(fa->anext == fb) {
+		*fp_a = fb;
+		fa->anext = fb->anext;
+		fb->anext = fa;
+	} else if(fb->anext == fa) {
+		*fp_b = fa;
+		fb->anext = fa->anext;
+		fa->anext = fb;
+	} else {
+		*fp_a = fb;
+		*fp_b = fa;
+		ft = fb->anext;
+		fb->anext = fa->anext;
+		fa->anext = ft;
+	}
+
+	if(fb->area->sel == fb)
+		fb->area->sel = fa;
+	if(fa->area->sel == fa)
+		fa->area->sel = fb;
+
+	fb->area = fa->area;
+	fa->area = a;
+
+	trect = fa->rect;
+	fa->rect = fb->rect;
+	fb->rect = trect;
 }
 
 void
@@ -100,4 +146,26 @@ draw_frames() {
 			update_frame_widget_colors(c->sel);
 			draw_frame(c->sel);
 		}
+}
+
+void
+check_frame_constraints(XRectangle *rect) {
+	int max_height;
+	int barheight;
+
+	barheight = screen->brect.height;
+	max_height = screen->rect.height - barheight;
+
+	if(rect->height > max_height)
+		rect->height = max_height;
+	if(rect->width > screen->rect.width)
+		rect->width = screen->rect.width;
+	if(rect->x + barheight > screen->rect.width)
+		rect->x = screen->rect.width - barheight;
+	if(rect->y + barheight > max_height)
+		rect->y = max_height - barheight;
+	if(rect->x + rect->width < barheight)
+		rect->x = barheight - rect->width;
+	if(rect->y + rect->height < barheight)
+		rect->y = barheight - rect->height;
 }

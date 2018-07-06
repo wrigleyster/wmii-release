@@ -14,7 +14,6 @@ options:
 	@echo "CFLAGS   = ${CFLAGS}"
 	@echo "LDFLAGS  = ${LDFLAGS}"
 	@echo "CC       = ${CC}"
-	@echo "LD       = ${LD}"
 
 .c.o:
 	@echo CC $<
@@ -24,8 +23,8 @@ ${OBJ}: wmii.h config.mk
 
 wmiiwm: ${OBJ}
 	@echo LD $@
-	@${LD} -o $@ ${OBJ} ${LDFLAGS}
-	@strip $@
+	@${CC} -o $@ ${OBJ} ${LDFLAGS}
+#	@strip $@
 
 clean:
 	@echo cleaning
@@ -43,21 +42,21 @@ dist: clean
 install: all
 	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
 	@mkdir -p ${DESTDIR}${PREFIX}/bin
-	@sed 's|CONFPREFIX|${CONFPREFIX}|g; s|VERSION|${VERSION}|g' <wmii >${DESTDIR}${PREFIX}/bin/wmii
+	@sed 's|CONFPREFIX|${CONFPREFIX}|g; s|CONFVERSION|${CONFVERSION}|g' <wmii >${DESTDIR}${PREFIX}/bin/wmii
 	@cp -f wmiir ${DESTDIR}${PREFIX}/bin
 	@cp -f wmiiwm ${DESTDIR}${PREFIX}/bin
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmii
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmiir
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/wmiiwm
-	@echo installing scripts to ${DESTDIR}${CONFPREFIX}/wmii-3.5
-	@mkdir -p ${DESTDIR}${CONFPREFIX}/wmii-3.5
+	@echo installing scripts to ${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}
+	@mkdir -p ${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}
 	@cd rc; for i in *; do \
-		sed 's|CONFPREFIX|${CONFPREFIX}|g' <$$i >${DESTDIR}${CONFPREFIX}/wmii-3.5/$$i; \
-		chmod 755 ${DESTDIR}${CONFPREFIX}/wmii-3.5/$$i; \
+		sed 's|CONFPREFIX|${CONFPREFIX}|g' <$$i >${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}/$$i; \
+		chmod 755 ${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}/$$i; \
 	done
 	@echo installing manual page to ${DESTDIR}${MANPREFIX}/man1
 	@mkdir -p ${DESTDIR}${MANPREFIX}/man1
-	@sed 's/VERSION/${VERSION}/g ; s,CONFPREFIX,${CONFPREFIX},g' < wmii.1 > ${DESTDIR}${MANPREFIX}/man1/wmii.1
+	@sed 's/VERSION/${VERSION}/g; s|CONFPREFIX|${CONFPREFIX}|g' < wmii.1 > ${DESTDIR}${MANPREFIX}/man1/wmii.1
 	@sed 's/VERSION/${VERSION}/g' < wmiir.1 > ${DESTDIR}${MANPREFIX}/man1/wmiir.1
 	@sed 's/VERSION/${VERSION}/g' < wmiiwm.1 > ${DESTDIR}${MANPREFIX}/man1/wmiiwm.1
 	@chmod 644 ${DESTDIR}${MANPREFIX}/man1/wmii.1
@@ -69,8 +68,8 @@ uninstall:
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmii
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmiir
 	@rm -f ${DESTDIR}${PREFIX}/bin/wmiiwm
-	@echo removing scripts from ${DESTDIR}${CONFPREFIX}/wmii-3.5
-	@rm -rf ${DESTDIR}${CONFPREFIX}/wmii-3.5
+	@echo removing scripts from ${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}
+	@rm -rf ${DESTDIR}${CONFPREFIX}/wmii-${CONFVERSION}
 	@echo removing manual page from ${DESTDIR}${MANPREFIX}/man1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/wmii.1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/wmiir.1

@@ -14,15 +14,7 @@ static char *Ebadcmd = "bad command",
 
 Client *
 sel_client() {
-	return screen->sel && screen->sel->sel->sel ? screen->sel->sel->sel->client : NULL;
-}
-
-int
-idx_of_client(Client *c) {
-	Client *cl;
-	int i = 0;
-	for(cl=client; cl && cl != c; cl=cl->next, i++);
-	return cl ? i : -1;
+	return screen->sel && screen->sel->sel->sel ? screen->sel->sel->sel->client : nil;
 }
 
 Client *
@@ -36,7 +28,7 @@ Frame *
 frame_of_win(Window w) {
 	Client *c;
 	for(c=client; c && c->framewin != w; c=c->next);
-	return c ? c->frame : NULL;
+	return c ? c->frame : nil;
 }
 
 static void
@@ -44,7 +36,7 @@ update_client_name(Client *c) {
 	XTextProperty name;
 	XClassHint ch;
 	int n;
-	char **list = NULL;
+	char **list = nil;
 
 	name.nitems = 0;
 	c->name[0] = 0;
@@ -81,10 +73,7 @@ create_client(Window w, XWindowAttributes *wa) {
 	Client **t, *c = (Client *) ixp_emallocz(sizeof(Client));
 	XSetWindowAttributes fwa;
 	long msize;
-	unsigned int i;
-	static unsigned int id = 1;
 
-	c->id = id++;
 	c->win = w;
 	c->rect.x = wa->x;
 	c->rect.y = wa->y;
@@ -117,11 +106,19 @@ create_client(Window w, XWindowAttributes *wa) {
 			CWOverrideRedirect | CWBackPixmap | CWEventMask, &fwa);
 	c->gc = XCreateGC(blz.dpy, c->framewin, 0, 0);
 	XSync(blz.dpy, False);
-	for(t=&client, i=0; *t; t=&(*t)->next, i++);
-	c->next = *t; /* *t == NULL */
+	for(t=&client; *t; t=&(*t)->next);
+	c->next = *t; /* *t == nil */
 	*t = c;
-	write_event("CreateClient %d\n", i);
+	write_event("CreateClient 0x%x\n", c->win);
 	return c;
+}
+
+void
+set_client_state(Client * c, int state)
+{
+	long data[] = { state, None };
+	XChangeProperty(blz.dpy, c->win, wm_atom[WMState], wm_atom[WMState], 32,
+			PropModeReplace, (unsigned char *) data, 2);
 }
 
 void
@@ -141,6 +138,8 @@ focus_client(Client *c, Bool restack) {
 	Client *old;
 	Frame *f;
 	View *v;
+	unsigned int a_i;
+	Area *a, *old_a;
 
 	if(!sel_screen)
 		return;
@@ -148,6 +147,7 @@ focus_client(Client *c, Bool restack) {
 	v = f->area->view;
 	old = sel_client();
 	old_in_area = sel_client_of_area(f->area);
+	old_a = v->sel;
 	v->sel = f->area;
 	f->area->sel = f;
 	c->floating = f->area->floating;
@@ -172,14 +172,20 @@ focus_client(Client *c, Bool restack) {
 	update_frame_widget_colors(c->sel);
 	draw_frame(c->sel);
 	XSync(blz.dpy, False);
-	write_event("ClientFocus %d\n", idx_of_client(c));
+	if(old_a != v->sel) {
+		for(a = v->area, a_i = 0; a && a != v->sel; a = a->next, a_i++);
+		if(a_i) write_event("ColumnFocus %d\n", a_i);
+		else write_event("FocusFloating\n");
+	}
+	write_event("ClientFocus 0x%x\n", c->win);
 }
 
 void
 map_client(Client *c) {
 	XSelectInput(blz.dpy, c->win, CLIENT_MASK & ~StructureNotifyMask);
 	XMapWindow(blz.dpy, c->win);
-	XSelectInput(blz.dpy, c->win, CLIENT_MASK);
+    XSelectInput(blz.dpy, c->win, CLIENT_MASK);
+	set_client_state(c, NormalState);
 }
 
 void
@@ -187,6 +193,7 @@ unmap_client(Client *c) {
 	XSelectInput(blz.dpy, c->win, CLIENT_MASK & ~StructureNotifyMask);
 	XUnmapWindow(blz.dpy, c->win);
 	XSelectInput(blz.dpy, c->win, CLIENT_MASK);
+	set_client_state(c, WithdrawnState);
 }
 
 void
@@ -365,7 +372,7 @@ dummy_error_handler(Display *dpy, XErrorEvent *error) {
 
 void
 destroy_client(Client *c) {
-	char *dummy = NULL;
+	char *dummy = nil;
 	Client **tc;
 
 	XGrabServer(blz.dpy);
@@ -388,6 +395,7 @@ destroy_client(Client *c) {
 	XSetErrorHandler(wmii_error_handler);
 	XUngrabServer(blz.dpy);
 	flush_masked_events(EnterWindowMask);
+	write_event("DestroyClient 0x%x\n", c->win);
 }
 
 void
@@ -457,7 +465,6 @@ void
 resize_client(Client *c, XRectangle *r, Bool ignore_xcall) {
 	Frame *f = c->sel;
 	Bool floating = f->area->floating;
-	unsigned int max_height;
 
 	BlitzAlign stickycorner = 0;
 	if(f->rect.x != r->x && f->rect.x + f->rect.width == r->x + r->width)
@@ -471,7 +478,6 @@ resize_client(Client *c, XRectangle *r, Bool ignore_xcall) {
 	f->rect = *r;
 	if((f->area->mode != Colstack) || (f->area->sel == f))
 		match_sizehints(c, &c->sel->rect, floating, stickycorner);
-	max_height = screen->rect.height - labelh(&def.font);
 	if(!ignore_xcall) {
 		if(floating) {
 			if((c->rect.width == screen->rect.width) &&
@@ -479,18 +485,7 @@ resize_client(Client *c, XRectangle *r, Bool ignore_xcall) {
 				f->rect.x = -def.border;
 				f->rect.y = -labelh(&def.font);
 			}else{
-				if(f->rect.height > max_height)
-					f->rect.height = max_height;
-				if(f->rect.width > screen->rect.width)
-					f->rect.width = screen->rect.width;
-				if(f->rect.x + f->rect.width > screen->rect.width)
-					f->rect.x = screen->rect.width - f->rect.width;
-				if(f->rect.y + f->rect.height > max_height)
-					f->rect.y = max_height - f->rect.height;
-				if(f->rect.x < 0)
-					f->rect.x = 0;
-				if(f->rect.y < 0)
-					f->rect.y = 0;
+				check_frame_constraints(&f->rect);
 			}
 		}
 		if(f->area->view == screen->sel)
@@ -548,7 +543,7 @@ move_client(Client *c, char *arg) {
 	new.x += x;
 	new.y += y;
 	if(!f->area->floating)
-		resize_column(f->client, &new, NULL);
+		resize_column(f->client, &new);
 	else
 		resize_client(f->client, &new, False);
 }
@@ -564,7 +559,7 @@ size_client(Client *c, char *arg) {
 	new.width += w;
 	new.height += h;
 	if(!f->area->floating)
-		resize_column(f->client, &new, NULL);
+		resize_column(f->client, &new);
 	else
 		resize_client(f->client, &new, False);
 }
@@ -639,7 +634,7 @@ send_client(Frame *f, char *arg) {
 		focus_client(f->client, False);
 		focus_view(screen, f->view);
 	}
-	return NULL;
+	return nil;
 }
 
 /* convenience function */
@@ -699,20 +694,23 @@ apply_tags(Client *c, const char *tags) {
 	char *toks[32];
 
 	strncpy(buf, tags, sizeof(buf));
+	trim(buf, " \t/");
 	if(!(n = ixp_tokenize(toks, 31, buf, '+')))
 		return;
 	for(i=0, j=0; i < n; i++) {
 		if(!strncmp(toks[i], "~", 2))
 			c->floating = True;
 		else if(!strncmp(toks[i], "!", 2))
-			toks[j++] = view ? screen->sel->name : "NULL";
-		else if(strncmp(toks[i], "sel", 4))
+			toks[j++] = view ? screen->sel->name : "nil";
+		else if(strncmp(toks[i], "sel", 4)
+				&& strncmp(toks[i], ".", 2)
+				&& strncmp(toks[i], "..", 3))
 			toks[j++] = toks[i];
 	}
 	c->tags[0] = '\0';
 	qsort(toks, j, sizeof(char *), compare_tags);
 	len = sizeof(c->tags);
-	if(!j) toks[j++] = "NULL";
+	if(!j) return;
 	for(i=0, n=0; i < j && len > 1; i++)
 		if(!n || strcmp(toks[i], toks[n-1])) {
 			if(i)
@@ -722,7 +720,7 @@ apply_tags(Client *c, const char *tags) {
 			len -= strlen(c->tags);
 			toks[n++] = toks[i];
 		}
-	toks[n] = NULL;
+	toks[n] = nil;
 	update_client_views(c, toks);
 	XChangeProperty(blz.dpy, c->win, tags_atom, XA_STRING, 8,
 			PropModeReplace, (unsigned char *)c->tags, strlen(c->tags));
@@ -735,7 +733,7 @@ match_tags(Client *c, const char *prop) {
 
 	for(r=def.tagrules.rule; r; r=r->next)
 		if(!regexec(&r->regex, prop, 1, &tmpregm, 0))
-			if(!strlen(c->tags) || !strncmp(c->tags, "NULL", 4))
+			if(!strlen(c->tags) || !strncmp(c->tags, "nil", 4))
 				apply_tags(c, r->value);
 }
 
@@ -744,14 +742,14 @@ apply_rules(Client *c) {
 	if(def.tagrules.string)
 		match_tags(c, c->props);
 	if(!strlen(c->tags))
-		apply_tags(c, "NULL");
+		apply_tags(c, "nil");
 }
 
 char *
 message_client(Client *c, char *message) {
 	if(!strncmp(message, "kill", 5)) {
 		kill_client(c);
-		return NULL;
+		return nil;
 	}
 	return Ebadcmd;
 }

@@ -10,6 +10,8 @@
 
 #include <ixp.h>
 
+#define nil	((void*)0)
+
 #define BLITZ_FONT		"-*-fixed-medium-r-normal-*-13-*-*-*-*-*-*-*"
 #define BLITZ_FOCUSCOLORS		"#ffffff #335577 #447799"
 #define BLITZ_SELCOLORS		"#444444 #bbbbbb #556088"
@@ -67,7 +69,7 @@ struct BlitzBrush {
 };
 
 /* WM atoms */
-enum { WMProtocols, WMDelete, WMLast };
+enum { WMState, WMProtocols, WMDelete, WMLast };
 
 /* NET atoms */
 enum { NetSupported, NetWMName, NetLast };
@@ -76,7 +78,7 @@ enum { NetSupported, NetWMName, NetLast };
 enum { Coldefault, Colstack, Colmax };
 
 /* Cursor */
-enum { CurNormal, CurResize, CurMove, CurInput, CurLast };
+enum { CurNormal, CurResize, CurMove, CurInput, CurInvisible, CurLast };
 
 enum { NCOL = 16 };
 enum { WM_PROTOCOL_DELWIN = 1 };
@@ -135,7 +137,6 @@ struct Client {
 	char name[256];
 	char tags[256];
 	char props[512];
-	unsigned short id;
 	unsigned int border;
 	int proto;
 	Bool floating;
@@ -254,6 +255,7 @@ extern Client *sel_client_of_area(Area *a);
 extern Bar *create_bar(Bar **b_link, char *name);
 extern void destroy_bar(Bar **b_link, Bar *b);
 extern void draw_bar(WMScreen *s);
+void draw_border(BlitzBrush *b);
 extern void resize_bar();
 extern Bar *bar_of_name(Bar *b_link, const char *name);
 
@@ -280,7 +282,6 @@ extern void newcol_client(Client *c, char *arg);
 extern Client *sel_client();
 extern Frame *frame_of_win(Window w);
 extern Client *client_of_win(Window w);
-extern int idx_of_client(Client *c);
 extern void update_client_grab(Client *c, Bool is_sel);
 extern void apply_rules(Client *c);
 extern void apply_tags(Client *c, const char *tags);
@@ -288,7 +289,7 @@ extern void apply_tags(Client *c, const char *tags);
 /* column.c */
 extern void arrange_column(Area *a, Bool dirty);
 extern void scale_column(Area *a, float h);
-extern void resize_column(Client *c, XRectangle *r, XPoint *pt);
+extern void resize_column(Client *c, XRectangle *r);
 extern int column_mode_of_str(char *arg);
 extern char *str_of_column_mode(int mode);
 extern Area *new_column(View *v, Area *pos, unsigned int w);
@@ -300,7 +301,7 @@ extern void draw_tile(BlitzBrush *b);
 extern void draw_rect(BlitzBrush *b);
 
 extern void drawbg(Display *dpy, Drawable drawable, GC gc,
-		XRectangle rect, BlitzColor c, Bool fill, Bool border);
+		XRectangle *rect, BlitzColor c, Bool fill, Bool border);
 extern void drawcursor(Display *dpy, Drawable drawable, GC gc,
 				int x, int y, unsigned int h, BlitzColor c);
 extern unsigned int textwidth(BlitzFont *font, char *text);
@@ -317,9 +318,11 @@ extern unsigned int flush_masked_events(long even_mask);
 extern Frame *create_frame(Client *c, View *v);
 extern void remove_frame(Frame *f);
 extern void insert_frame(Frame *pos, Frame *f, Bool before);
+void swap_frames(Frame *fa, Frame *fb);
 extern void draw_frame(Frame *f);
 extern void draw_frames();
 extern void update_frame_widget_colors(Frame *f);
+void check_frame_constraints(XRectangle *rect);
 
 /* fs.c */
 extern void fs_attach(P9Req *r);

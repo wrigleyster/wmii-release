@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 char *
 str_of_column_mode(int mode) {
 	switch(mode) {
@@ -14,7 +13,7 @@ str_of_column_mode(int mode) {
 	case Colmax: return "max"; break;
 	default: break;
 	}
-	return NULL;
+	return nil;
 }
 
 int
@@ -58,7 +57,7 @@ relax_column(Area *a) {
 		for(f=a->frame; f; f=f->anext) {
 			f->rect.x = a->rect.x + (a->rect.width - f->rect.width) / 2;
 			f->rect.y = a->rect.y + (a->rect.height - f->rect.height) / 2;
-			//resize_client(f->client, &f->rect, True);
+			resize_client(f->client, &f->rect, True);
 		}
 		return;
 	}
@@ -79,7 +78,7 @@ relax_column(Area *a) {
 			for(f=a->frame; f && (hx < hdiff); f=f->anext) {
 				unsigned int tmp = f->rect.height;
 				f->rect.height += hx;
-				//resize_client(f->client, &f->rect, True);
+				resize_client(f->client, &f->rect, True);
 				hdiff -= (f->rect.height - tmp);
 			}
 	}
@@ -93,7 +92,7 @@ relax_column(Area *a) {
 			f->rect.x = a->rect.x + (a->rect.width - f->rect.width) / 2;
 			yoff = f->rect.y + f->rect.height + hdiff;
 		}
-		//resize_client(f->client, &f->rect, True);
+		resize_client(f->client, &f->rect, True);
 	}
 }
 
@@ -203,9 +202,9 @@ match_horiz(Area *a, XRectangle *r) {
 
 static void
 drop_resize(Frame *f, XRectangle *new) {
-	Area *west = NULL, *east = NULL, *a = f->area;
+	Area *west = nil, *east = nil, *a = f->area;
 	View *v = a->view;
-	Frame *north = NULL, *south = NULL;
+	Frame *north = nil, *south = nil;
 	unsigned int min_height = 2 * labelh(&def.font);
 	unsigned int min_width = screen->rect.width/NCOL;
 
@@ -298,93 +297,16 @@ AfterVertical:
 	focus_view(screen, v);
 }
 
-static Frame *
-frame_of_point(XPoint *pt) {
-	Area *a;
-	View *v = screen->sel;
-	Frame *f = NULL;
-
-	if(!v)
-		return NULL;
-	for(a=v->area->next; a && !ispointinrect(pt->x, pt->y, &a->rect);
-		a=a->next);
-	if(a)
-		for(f=a->frame; f && !ispointinrect(pt->x, pt->y, &f->rect);
-			f=f->anext);
-	return f;
-}
-
-static void
-drop_move(Frame *f, XRectangle *new, XPoint *pt) {
-	Area *tgt, *src;
-	Frame *ft;
-	View *v;
-
-	tgt = NULL;
-	src = f->area;
-	v = src->view;
-	if(!pt)
-		return;
-	for(tgt=v->area->next; tgt && !ispointinrect(pt->x, pt->y, &tgt->rect);
-		tgt=tgt->next);
-	if(tgt) {
-		if(pt->x < 16) {
-			if((src->frame && src->frame->anext) || (src != v->area->next)) {
-				tgt = new_column(v, v->area->next, 0);
-				send_to_area(tgt, src, f);
-			}
-		}
-		else if(pt->x >= screen->rect.width - 16) {
-			if((src->frame && src->frame->anext) || src->next) {
-				for(tgt=src; tgt->next; tgt=tgt->next);
-				tgt = new_column(v, tgt, 0);
-				send_to_area(tgt, src, f);
-			}
-		}
-		else if(src != tgt) {
-			Client *c = f->client;
-			Bool before;
-			if(!(ft = frame_of_point(pt)) || (f == ft))
-				return;
-			before = pt->y < (ft->rect.y + ft->rect.height / 2);
-			send_to_area(tgt, src, f);
-			f = c->sel;
-			remove_frame(f);
-			if(before)
-				insert_frame(ft, f, True);
-			else
-				insert_frame(ft, f, False);
-			tgt->sel = f;
-			arrange_column(tgt, False);
-		}
-		else { /* !tgt */
-			if(!(ft = frame_of_point(pt)) || (f == ft))
-				return;
-			remove_frame(f);
-			if(pt->y < (ft->rect.y + ft->rect.height / 2))
-				insert_frame(ft, f, True);
-			else
-				insert_frame(ft, f, False);
-			tgt->sel = f;
-			arrange_column(tgt, False);
-		}
-	}
-}
-
 void
-resize_column(Client *c, XRectangle *r, XPoint *pt) {
-	Frame *f = c->sel;
-	if((f->rect.width == r->width) && (f->rect.height == r->height))
-		drop_move(f, r, pt);
-	else
-		drop_resize(f, r);
+resize_column(Client *c, XRectangle *r) {
+	drop_resize(c->sel, r);
 }
 
 Area *
 new_column(View *v, Area *pos, unsigned int w) {
 	Area *a = create_area(v, pos, w);
 	if(!a)
-		return NULL;
+		return nil;
 	arrange_view(v);
 	return a;
 }

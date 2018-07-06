@@ -74,7 +74,7 @@ buttonrelease(XEvent *e) {
 			}
 	}
 	else if((f = frame_of_win(ev->window))) 
-		write_event("ClientClick %d %d\n", idx_of_client(f->client), ev->button);
+		write_event("ClientClick 0x%x %d\n", f->client->win, ev->button);
 }
 
 static void
@@ -91,7 +91,8 @@ buttonpress(XEvent *e) {
 				do_mouse_resize(f->client, CENTER);
 				break;
 			case Button3:
-				do_mouse_resize(f->client, quadofcoord(&f->client->rect, ev->x, ev->y));
+				do_mouse_resize(f->client,
+						quadofcoord(&f->client->rect, ev->x, ev->y));
 			default:
 			break;
 			}

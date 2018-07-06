@@ -10,7 +10,7 @@ unsigned int
 textwidth_l(BlitzFont *font, char *text, unsigned int len) {
 	if(font->set) {
 		XRectangle r;
-		XmbTextExtents(font->set, text, len, NULL, &r);
+		XmbTextExtents(font->set, text, len, nil, &r);
 		return r.width;
 	}
 	return XTextWidth(font->xfont, text, len);
@@ -24,7 +24,7 @@ textwidth(BlitzFont *font, char *text) {
 void
 loadfont(Blitz *blitz, BlitzFont *font) {
 	char *fontname = font->fontstr;
-	char **missing = NULL, *def = "?";
+	char **missing = nil, *def = "?";
 	int n;
 
 	if(font->set)
@@ -54,10 +54,10 @@ loadfont(Blitz *blitz, BlitzFont *font) {
 	else {
 		if(font->xfont)
 			XFreeFont(blitz->dpy, font->xfont);
-		font->xfont = NULL;
+		font->xfont = nil;
 		font->xfont = XLoadQueryFont(blitz->dpy, fontname);
 		if (!font->xfont) {
-			fprintf(stderr, "%s", "wmii: error, cannot load 'fixed' font\n");
+			fprintf(stderr, "wmii: error, cannot load 'fixed' font\n");
 			exit(1);
 		}
 		font->ascent = font->xfont->ascent;
@@ -73,13 +73,13 @@ labelh(BlitzFont *font) {
 
 void
 draw_tile(BlitzBrush *b) {
-	drawbg(b->blitz->dpy, b->drawable, b->gc, b->rect,
+	drawbg(b->blitz->dpy, b->drawable, b->gc, &b->rect,
 			b->color, True, b->border);
 }
 
 void
 draw_border(BlitzBrush *b) {
-	drawbg(b->blitz->dpy, b->drawable, b->gc, b->rect,
+	drawbg(b->blitz->dpy, b->drawable, b->gc, &b->rect,
 			b->color, False, True);
 }
 
@@ -137,29 +137,18 @@ draw_label(BlitzBrush *b, char *text) {
 }
 
 void
-drawbg(Display *dpy, Drawable drawable, GC gc, XRectangle rect,
+drawbg(Display *dpy, Drawable drawable, GC gc, XRectangle *rect,
 			BlitzColor c, Bool fill, Bool border)
 {
-	XPoint points[5];
 	if(fill) {
 		XSetForeground(dpy, gc, c.bg);
-		XFillRectangles(dpy, drawable, gc, &rect, 1);
+		XFillRectangles(dpy, drawable, gc, rect, 1);
 	}
 	if(!border)
 		return;
 	XSetLineAttributes(dpy, gc, 1, LineSolid, CapButt, JoinMiter);
 	XSetForeground(dpy, gc, c.border);
-	points[0].x = rect.x;
-	points[0].y = rect.y;
-	points[1].x = rect.width - 1;
-	points[1].y = 0;
-	points[2].x = 0;
-	points[2].y = rect.height - 1;
-	points[3].x = -(rect.width - 1);
-	points[3].y = 0;
-	points[4].x = 0;
-	points[4].y = -(rect.height - 1);
-	XDrawLines(dpy, drawable, gc, points, 5, CoordModePrevious);
+	XDrawRectangles(dpy, drawable, gc, rect, 1);
 }
 
 void
@@ -224,5 +213,5 @@ parse_colors(char **buf, int *buflen, BlitzColor *col) {
 		(*buf)++;
 		(*buflen)--;
 	}
-	return NULL;
+	return nil;
 }
