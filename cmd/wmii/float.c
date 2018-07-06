@@ -1,4 +1,4 @@
-/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -198,7 +198,9 @@ float_placeframe(Frame *f) {
 	 */
 	s = -1;
 	ff = client_groupframe(c, f->view);
-	if (ff)
+	if (f->screen >= 0)
+		s = f->screen;
+	else if (ff)
 		s = ownerscreen(ff->r);
 	else if (selclient())
 		s = ownerscreen(selclient()->sel->r);
@@ -208,9 +210,7 @@ float_placeframe(Frame *f) {
 			s = sel->screen;
 	}
 
-	r = a->r;
-	if (s > -1)
-		r = screens[s]->r;
+	r = s == -1 ? a->r : screens[s]->r;
 	vp = unique_rects(&vec, r);
 
 	area = LONG_MAX;
@@ -231,12 +231,13 @@ float_placeframe(Frame *f) {
 
 	if(area == LONG_MAX) {
 		/* Cascade. */
+		s = max(s, 0);
 		ff = a->sel;
 		if(ff)
 			p = addpt(ff->r.min, Pt(Dy(ff->titlebar), Dy(ff->titlebar)));
-		if(p.x + Dx(f->r) > Dx(screen->r) ||
-		   p.y + Dy(f->r) > screen->brect.min.y)
-			p = ZP;
+		if(p.x + Dx(f->r) > screens[s]->r.max.x ||
+		   p.y + Dy(f->r) > screens[s]->r.max.y)
+			p = screens[s]->r.min;
 	}
 
 	f->floatr = rectsetorigin(f->r, p);

@@ -1,5 +1,5 @@
 /* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
- * Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+ * Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -178,9 +178,9 @@ client_create(XWindow w, XWindowAttributes *wa) {
 
 	/* 
 	 * It's actually possible for a window to be destroyed
-	 * before we get a chance to reparant it. Check for that
-	 * now, because otherwise we'll wind up mapping an empty
-	 * frame.
+	 * before we get a chance to reparent it. Check for that
+	 * now, because otherwise we'll wind up mapping a
+	 * perceptibly empty frame before it's destroyed.
 	 */
 	traperrors(true);
 	reparentwindow(&c->w, c->framewin, p);
@@ -196,11 +196,23 @@ client_create(XWindow w, XWindowAttributes *wa) {
 	return c;
 }
 
+static bool
+apply_rules(Client *c) {
+	Rule *r;
+
+	if(def.tagrules.string)
+		for(r=def.tagrules.rule; r; r=r->next)
+			if(regexec(r->regex, c->props, nil, 0))
+				return client_applytags(c, r->value);
+	return false;
+}
+
 void
 client_manage(Client *c) {
 	Client *leader;
 	Frame *f;
 	char *tags;
+	bool rules;
 
 	if(Dx(c->r) == Dx(screen->r))
 	if(Dy(c->r) == Dy(screen->r))
@@ -208,23 +220,22 @@ client_manage(Client *c) {
 		fullscreen(c, true, -1);
 
 	tags = getprop_string(&c->w, "_WMII_TAGS");
+	rules = apply_rules(c);
 
 	leader = win2client(c->trans);
 	if(leader == nil && c->group)
 		leader = group_leader(c->group);
 
-	if(tags && (!leader || leader == c || starting))
+	if(tags) // && (!leader || leader == c || starting))
 		utflcpy(c->tags, tags, sizeof c->tags);
-	else if(leader)
+	else if(leader && !rules)
 		utflcpy(c->tags, leader->tags, sizeof c->tags);
 	free(tags);
 
-	if(!c->tags[0])
-		apply_rules(c);
 	if(c->tags[0])
-		apply_tags(c, c->tags);
+		client_applytags(c, c->tags);
 	else
-		apply_tags(c, "sel");
+		client_applytags(c, "sel");
 
 	if(!starting)
 		view_update_all();
@@ -282,12 +293,16 @@ client_destroy(Client *c) {
 	else
 		reparentwindow(&c->w, &scr.root, r.min);
 
+	if(starting > -1)
+		XRemoveFromSaveSet(display, c->w.xid);
+
 	traperrors(false);
 	XUngrabServer(display);
 
 	none = nil;
 	client_setviews(c, &none);
-	client_unmap(c, WithdrawnState);
+	if(starting > -1)
+		client_unmap(c, WithdrawnState);
 	refree(&c->tagre);
 	refree(&c->tagvre);
 	free(c->retags);
@@ -296,7 +311,8 @@ client_destroy(Client *c) {
 
 	ewmh_destroyclient(c);
 	group_remove(c);
-	event("DestroyClient %C\n", c);
+	if(starting > -1)
+		event("DestroyClient %C\n", c);
 
 	flushevents(FocusChangeMask, true);
 	free(c->w.hints);
@@ -530,6 +546,7 @@ client_resize(Client *c, Rectangle r) {
 			unmap_frame(c);
 		else {
 			reshapewin(c->framewin, f->r);
+			movewin(&c->w, f->crect.min);
 			map_frame(c);
 		}
 		client_unmap(c, IconicState);
@@ -592,9 +609,10 @@ client_kill(Client *c, bool nice) {
 
 void
 fullscreen(Client *c, int fullscreen, long screen) {
+	Client *leader;
 	Frame *f;
 	bool wassel;
-	
+
 	if(fullscreen == Toggle)
 		fullscreen = (c->fullscreen >= 0) ^ On;
 	if(fullscreen == (c->fullscreen >= 0))
@@ -621,7 +639,16 @@ fullscreen(Client *c, int fullscreen, long screen) {
 			}
 		}
 	else {
-		c->fullscreen = screen >= 0 ? screen : ownerscreen(c->r);
+		c->fullscreen = 0;
+		if(screen >= 0)
+			c->fullscreen = screen;
+		else if(c->sel)
+			c->fullscreen = ownerscreen(c->r);
+		else if(c->group && (leader = group_leader(c->group)) && leader->sel)
+			c->fullscreen = ownerscreen(leader->r);
+		else if(selclient())
+			c->fullscreen = ownerscreen(selclient()->r);
+
 		for(f=c->frame; f; f=f->cnext)
 			f->oldarea = -1;
 		if((f = c->sel))
@@ -741,16 +768,16 @@ updatemwm(Client *c) {
 
 	c->borderless = 0;
 	c->titleless = 0;
-	if(n >= 3 && (ret[Flags]&FlagDecor)) {
-		if(ret[Decor]&All)
+	if(n >= 3 && (ret[Flags] & FlagDecor)) {
+		if(ret[Decor] & All)
 			ret[Decor] ^= ~0;
-		c->borderless = !(ret[Decor]&Border);
-		c->titleless = !(ret[Decor]&Title);
+		c->borderless = !(ret[Decor] & Border);
+		c->titleless = !(ret[Decor] & Title);
 	}
 	free(ret);
 
-	if(c->sel) {
-		c->sel->floatr = c->r;
+	if(c->sel && false) {
+		c->sel->floatr = client_grav(c, r);
 		if(c->sel->area->floating) {
 			client_resize(c, c->sel->floatr);
 			frame_draw(c->sel);
@@ -809,7 +836,7 @@ client_prop(Client *c, Atom a) {
 		update_class(c);
 		break;
 	case XA_WM_NAME:
-wmname:
+	wmname:
 		client_updatename(c);
 		break;
 	}
@@ -1051,10 +1078,10 @@ client_extratags(Client *c) {
 	return s;
 }
 
-void
-apply_tags(Client *c, const char *tags) {
+bool
+client_applytags(Client *c, const char *tags) {
 	uint i, j, k, n;
-	bool add;
+	bool add, found;
 	char buf[512], last;
 	char *toks[32];
 	char **p;
@@ -1083,6 +1110,8 @@ apply_tags(Client *c, const char *tags) {
 		add = false;
 	}
 
+	found = false;
+
 	j = 0;
 	while(buf[n] && n < sizeof(buf) && j < 32) {
 		/* Check for regex. */
@@ -1102,6 +1131,7 @@ apply_tags(Client *c, const char *tags) {
 					last = buf[i];
 					buf[i] = '\0';
 
+					found = true;
 					goto next;
 				}
 			}
@@ -1128,9 +1158,10 @@ apply_tags(Client *c, const char *tags) {
 			cur = buf+n;
 
 		if(cur && j < nelem(toks)-1) {
-			if(add)
+			if(add) {
+				found = true;
 				toks[j++] = cur;
-			else {
+			}else {
 				for(i = 0, k = 0; i < j; i++)
 					if(strcmp(toks[i], cur))
 						toks[k++] = toks[i];
@@ -1176,17 +1207,6 @@ apply_tags(Client *c, const char *tags) {
 	p = comm(~0, c->retags, toks);
 	client_setviews(c, p);
 	free(p);
-}
-
-void
-apply_rules(Client *c) {
-	Rule *r;
-
-	if(def.tagrules.string) 	
-		for(r=def.tagrules.rule; r; r=r->next)
-			if(regexec(r->regex, c->props, nil, 0)) {
-				apply_tags(c, r->value);
-				break;
-			}
+	return found;
 }
 

@@ -1,4 +1,4 @@
-/* Copyright ©2007-2009 Kris Maglione <jg@suckless.org>
+/* Copyright ©2007-2010 Kris Maglione <jg@suckless.org>
  * See LICENSE file for license details.
  */
 
@@ -68,8 +68,7 @@ void	bar_setbounds(WMScreen*, int, int);
 
 /* client.c */
 int	Cfmt(Fmt *f);
-void	apply_rules(Client*);
-void	apply_tags(Client*, const char*);
+bool	client_applytags(Client*, const char*);
 void	client_configure(Client*);
 Client*	client_create(XWindow, XWindowAttributes*);
 void	client_destroy(Client*);
@@ -121,6 +120,13 @@ void	div_update_all(void);
 bool	find(Area**, Frame**, int, bool, bool);
 int	stack_count(Frame*, int*);
 Frame*	stack_find(Area*, Frame*, int, bool);
+
+/* error.c */
+#define waserror() setjmp(pusherror())
+void	error(char*, ...);
+void	nexterror(void);
+void	poperror(void);
+jmp_buf*	pusherror(void);
 
 /* event.c */
 void	check_x_event(IxpConn*);
@@ -249,6 +255,9 @@ void	mouse_resizecol(Divide*);
 bool	readmotion(Point*);
 int	readmouse(Point*, uint*);
 Align	snap_rect(const Rectangle *rects, int num, Rectangle *current, Align *mask, int snapw);
+
+/* print.c */
+int	Ffmt(Fmt*);
 
 /* printevent.c */
 void	printevent(XEvent*);

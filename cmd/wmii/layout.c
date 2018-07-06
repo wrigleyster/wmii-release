@@ -1,4 +1,4 @@
-/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -34,6 +34,7 @@ static Rectangle
 framerect(Framewin *f) {
 	Rectangle r;
 	Point p;
+	int scrn;
 
 	r.min = ZP;
 	if(f->orientation == OHoriz) {
@@ -46,11 +47,15 @@ framerect(Framewin *f) {
 	}
 	r = rectaddpt(r, f->pt);
 
+	scrn = f->screen;
+	if (scrn == -1)
+		scrn = max(ownerscreen(f->f->r), 0);
+
 	/* Keep onscreen */
 	p = ZP;
 	p.x -= min(0, r.min.x);
-	p.x -= max(0, r.max.x - screens[f->screen]->r.max.x);
-	p.y -= max(0, r.max.y - screens[f->screen]->brect.min.y - Dy(r)/2);
+	p.x -= max(0, r.max.x - screens[scrn]->r.max.x);
+	p.y -= max(0, r.max.y - screens[scrn]->brect.min.y - Dy(r)/2);
 	return rectaddpt(r, p);
 }
 
@@ -483,7 +488,7 @@ tvcol(Frame *f) {
 	Rectangle r;
 	Point pt, pt2;
 	uint button;
-	int ret;
+	int ret, scrn;
 
 	focus(f->client, false);
 
@@ -491,7 +496,8 @@ tvcol(Frame *f) {
 	pt2.x = pt.x;
 	pt2.y = f->area->r.min.y;
 
-	r = f->view->r[f->area->screen];
+	scrn = f->area->screen > -1 ? f->area->screen : find_area(pt) ? find_area(pt)->screen : 0;
+	r = f->view->r[scrn];
 	fw = framewin(f, pt2, OVert, Dy(r));
 
 	r.min.y += fw->grabbox.min.y + Dy(fw->grabbox)/2;

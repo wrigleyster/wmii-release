@@ -1,11 +1,68 @@
-wmii-hg (hg2550) unstable; urgency=low
+wmii (3.9) unstable; urgency=low
 
-  * Bump window manager alternative priority from 20 to 60 per policy manual.
+  * Release 3.9
 
- -- Kris Maglione <jg@suckless.org>  Fri,  16 Oct 2009 10:13:22 -0500
+ -- Kris Maglione <jg@suckless.org>  Mon May 24 10:48:12 EDT 2010
 
-wmii-hg (hg2548) unstable; urgency=low
+wmii (3.9) unstable; urgency=low
 
-  * Sync with Daniel Bauman's upstream package.
+  * Release 3.9
 
- -- Kris Maglione <jg@suckless.org>  Wed,  14 Oct 2009 18:54:05 -0500
+ -- Kris Maglione <jg@suckless.org>  Mon May 24 10:46:52 EDT 2010
+
+wmii (3.9) unstable; urgency=low
+
+  * Release 3.9
+
+ -- Kris Maglione <jg@suckless.org>  Mon May 24 10:45:30 EDT 2010
+
+wmii (3.9) unstable; urgency=low
+
+  * Release 3.9
+
+ -- Kris Maglione <jg@suckless.org>  Mon May 24 10:43:06 EDT 2010
+
+wmii (3.9) unstable; urgency=low
+
+  * Release 3.9
+
+ -- Kris Maglione <jg@suckless.org>  Fri May 21 11:13:15 EDT 2010
+
+wmii (3.9) unstable; urgency=low
+
+  * Release 3.9
+
+ -- Kris Maglione <jg@suckless.org>  Thu May 20 11:34:30 EDT 2010
+
+wmii (3.9~beta1-4) unstable; urgency=low
+
+  * Rebuild man pages.
+
+ -- Kris Maglione <jg@suckless.org>  Mon,  26 Oct 2009 17:40:45 -0400
+
+wmii (3.9~beta1-3) unstable; urgency=low
+
+  * Remove debug cflags
+  * Speed up build
+  * Properly set version
+
+ -- Kris Maglione <jg@suckless.org>  Mon,  26 Oct 2009 16:45:34 -0400
+
+wmii (3.9~beta1-2) unstable; urgency=medium
+
+  * Fix package build issues
+
+ -- Kris Maglione <jg@suckless.org>  Sun,  25 Oct 2009 17:08:36 -0500
+
+wmii (3.9~beta1-1) unstable; urgency=low
+
+  * Bump package version to fix botched upload
+
+ -- Kris Maglione <jg@suckless.org>  Thu,  22 Oct 2009 11:13:22 -0500
+
+
+wmii (3.9~beta1) unstable; urgency=low
+
+  * Release 3.9b1
+
+ -- Kris Maglione <jg@suckless.org>  Thu,  22 Oct 2009 10:13:22 -0500

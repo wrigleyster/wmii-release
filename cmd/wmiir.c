@@ -1,4 +1,4 @@
-/* Copyight ©2007-2009 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyight ©2007-2010 Kris Maglione <fbsdaemon@gmail.com>
  * See LICENSE file for license details.
  */
 #define IXP_NO_P9_
@@ -367,13 +367,14 @@ struct exectab {
 	{0, }
 }, utiltab[] = {
 	{"namespace", xnamespace},
+	{"ns", xnamespace},
 	{"setsid", xsetsid},
 	{0, }
 };
 
 int
 main(int argc, char *argv[]) {
-	char *address, *cmd;
+	char *address;
 	exectab *tab;
 	int ret;
 

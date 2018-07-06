@@ -1,4 +1,4 @@
-/* Copyright ©2007-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2007-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -488,7 +488,7 @@ ewmh_updateviews(void) {
 		return;
 
 	vector_pinit(&tags);
-	for(v=view, i=0; v; v=v->next)
+	for(v=view, i=0; v; v=v->next, i++)
 		vector_ppush(&tags, v->name);
 	vector_ppush(&tags, nil);
 	changeprop_textlist(&scr.root, Net("DESKTOP_NAMES"), "UTF8_STRING", (char**)tags.ary);

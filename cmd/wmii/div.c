@@ -1,4 +1,4 @@
-/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -66,13 +66,13 @@ div_set(Divide *d, int x) {
 }
 
 static void
-drawimg(Image *img, ulong cbg, ulong cborder, Divide *d) {
+drawimg(Image *img, Color cbg, Color cborder, Divide *d) {
 	Point pt[8];
 	int n, start, w;
 
 	w = Dx(img->r)/2;
 	n = 0;
-	pt[n++] = Pt(w    ,	0);
+	pt[n++] = Pt(w,		0);
 	pt[n++] = Pt(0,		0);
 	pt[n++] = Pt(w - 1,	w - 1);
 
@@ -93,8 +93,8 @@ drawimg(Image *img, ulong cbg, ulong cborder, Divide *d) {
 static void
 drawdiv(Divide *d) {
 
-	fill(divmask, divmask->r, 0);
-	drawimg(divmask, 1, 1, d);
+	fill(divmask, divmask->r, (Color){0});
+	drawimg(divmask, (Color){1}, (Color){1}, d);
 	drawimg(divimg, divcolor.bg, divcolor.border, d);
 
 	copyimage(d->w, divimg->r, divimg, ZP);

@@ -1,4 +1,4 @@
-/* Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -35,7 +35,9 @@ frame_create(Client *c, View *v) {
 		c->sel = f;
 	}
 	f->collapsed = false;
+	f->screen = -1;
 	f->oldarea = -1;
+	f->oldscreen = -1;
 
 	return f;
 }
@@ -281,10 +283,8 @@ frame_gethints(Frame *f) {
 	h.min.x += d.x;
 	h.min.y += d.y;
 	/* Guard against overflow. */
-	if(h.max.x + d.x > h.max.x)
-		h.max.x += d.x;
-	if(h.max.y + d.y > h.max.y)
-		h.max.y += d.y;
+	h.max.x = max(h.max.x + d.x, h.max.x);
+	h.max.y = max(h.max.y + d.y, h.max.y);
 
 	h.base.x += d.x;
 	h.base.y += d.y;
@@ -464,8 +464,8 @@ frame_draw(Frame *f) {
 
 	/* grabbox */
 	r.min = Pt(2, 2);
-	r.max.x = r.min.x + def.font->height - 3;
 	r.max.y -= 2;
+	r.max.x = r.min.x + Dy(r);
 	f->grabbox = r;
 
 	if(c->urgent)
@@ -481,7 +481,7 @@ frame_draw(Frame *f) {
 	if(f->area->floating && c->borderless && c->titleless && !c->fullscreen && c == selclient())
 		setborder(c->framewin, def.border, def.focuscolor.border);
 	else
-		setborder(c->framewin, 0, 0);
+		setborder(c->framewin, 0, def.focuscolor.border);
 
 	/* Label */
 	r.min.x = r.max.x;

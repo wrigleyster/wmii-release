@@ -1,4 +1,4 @@
-/* Copyright ©2007-2009 Kris Maglione <maglione.k at Gmail>
+/* Copyright ©2007-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #define _X11_VISIBLE
@@ -26,7 +26,7 @@ static MapEnt*	abucket[137];
 static int	errorhandler(Display*, XErrorEvent*);
 static int	(*xlib_errorhandler) (Display*, XErrorEvent*);
 
-static XftColor*	xftcolor(ulong);
+static XftColor*	xftcolor(Color);
 
 
 /* Rectangles/Points */
@@ -366,11 +366,11 @@ configwin(Window *w, Rectangle r, int border) {
 }
 
 void
-setborder(Window *w, int width, long pixel) {
+setborder(Window *w, int width, Color col) {
 
 	assert(w->type == WWindow);
 	if(width)
-		XSetWindowBorder(display, w->xid, pixel);
+		XSetWindowBorder(display, w->xid, col.pixel);
 	if(width != w->border)
 		configwin(w, w->r, width);
 }
@@ -465,13 +465,13 @@ setshapemask(Window *dst, Image *src, Point pt) {
 }
 
 static void
-setgccol(Image *dst, ulong col) {
-	XSetForeground(display, dst->gc, col);
+setgccol(Image *dst, Color col) {
+	XSetForeground(display, dst->gc, col.pixel);
 }
 
 /* Drawing */
 void
-border(Image *dst, Rectangle r, int w, ulong col) {
+border(Image *dst, Rectangle r, int w, Color col) {
 	if(w == 0)
 		return;
 
@@ -486,7 +486,7 @@ border(Image *dst, Rectangle r, int w, ulong col) {
 }
 
 void
-fill(Image *dst, Rectangle r, ulong col) {
+fill(Image *dst, Rectangle r, Color col) {
 	setgccol(dst, col);
 	XFillRectangle(display, dst->xid, dst->gc,
 		r.min.x, r.min.y, Dx(r), Dy(r));
@@ -506,7 +506,7 @@ convpts(Point *pt, int np) {
 }
 
 void
-drawpoly(Image *dst, Point *pt, int np, int cap, int w, ulong col) {
+drawpoly(Image *dst, Point *pt, int np, int cap, int w, Color col) {
 	XPoint *xp;
 	
 	xp = convpts(pt, np);
@@ -517,7 +517,7 @@ drawpoly(Image *dst, Point *pt, int np, int cap, int w, ulong col) {
 }
 
 void
-fillpoly(Image *dst, Point *pt, int np, ulong col) {
+fillpoly(Image *dst, Point *pt, int np, Color col) {
 	XPoint *xp;
 
 	xp = convpts(pt, np);
@@ -527,7 +527,7 @@ fillpoly(Image *dst, Point *pt, int np, ulong col) {
 }
 
 void
-drawline(Image *dst, Point p1, Point p2, int cap, int w, ulong col) {
+drawline(Image *dst, Point p1, Point p2, int cap, int w, Color col) {
 	XSetLineAttributes(display, dst->gc, w, LineSolid, cap, JoinMiter);
 	setgccol(dst, col);
 	XDrawLine(display, dst->xid, dst->gc, p1.x, p1.y, p2.x, p2.y);
@@ -536,9 +536,10 @@ drawline(Image *dst, Point p1, Point p2, int cap, int w, ulong col) {
 uint
 drawstring(Image *dst, Font *font,
 	   Rectangle r, Align align,
-	   char *text, ulong col) {
+	   char *text, Color col) {
+	Rectangle tr;
 	char *buf;
-	uint x, y, w, h, len;
+	uint x, y, width, height, len;
 	int shortened;
 
 	shortened = 0;
@@ -547,14 +548,22 @@ drawstring(Image *dst, Font *font,
 	buf = emalloc(len+1);
 	memcpy(buf, text, len+1);
 
-	h = font->ascent + font->descent;
-	y = r.min.y + Dy(r) / 2 - h / 2 + font->ascent;
+	r.max.y -= font->pad.min.y;
+	r.min.y += font->pad.max.y;
+
+	height = font->ascent + font->descent;
+	y = r.min.y + Dy(r) / 2 - height / 2 + font->ascent;
+
+	width = Dx(r) - font->pad.min.x - font->pad.max.x - (font->height & ~1);
+
+	r.min.x += font->pad.min.x;
+	r.max.x -= font->pad.max.x;
 
 	/* shorten text if necessary */
-	w = 0;
+	tr = ZR;
 	while(len > 0) {
-		w = textwidth_l(font, buf, len + min(shortened, 3));
-		if(w <= Dx(r) - (font->height & ~1))
+		tr = textextents_l(font, buf, len + min(shortened, 3), nil);
+		if(Dx(tr) <= width)
 			break;
 		while(len > 0 && (buf[--len]&0xC0) == 0x80)
 			buf[len] = '.';
@@ -562,7 +571,7 @@ drawstring(Image *dst, Font *font,
 		shortened++;
 	}
 
-	if(len == 0 || w > Dx(r))
+	if(len == 0 || Dx(tr) > width)
 		goto done;
 
 	/* mark shortened info in the string */
@@ -571,13 +580,13 @@ drawstring(Image *dst, Font *font,
 
 	switch (align) {
 	case East:
-		x = r.max.x - (w + (font->height / 2));
+		x = r.max.x - (tr.max.x + (font->height / 2));
 		break;
 	case Center:
-		x = r.min.x + (Dx(r) - w) / 2;
+		x = r.min.x + (Dx(r) - Dx(tr)) / 2 - tr.min.x;
 		break;
 	default:
-		x = r.min.x + (font->height / 2);
+		x = r.min.x + (font->height / 2) - tr.min.x;
 		break;
 	}
 
@@ -605,7 +614,7 @@ drawstring(Image *dst, Font *font,
 
 done:
 	free(buf);
-	return w;
+	return Dx(tr);
 }
 
 void
@@ -619,16 +628,18 @@ copyimage(Image *dst, Rectangle r, Image *src, Point p) {
 
 /* Colors */
 bool
-namedcolor(char *name, ulong *ret) {
+namedcolor(char *name, Color *ret) {
 	XColor c, c2;
 
 	if(XAllocNamedColor(display, scr.colormap, name, &c, &c2)) {
-		/* FIXME: Kludge. */
-		/* This isn't garunteed to work. In the case of RGBA
-		 * visuals, we need the Alpha set to 1.0. This
-		 * could, in theory, break plain RGB, or even RGBA.
-		 */
-		*ret = c.pixel | 0xff000000;
+		*ret = (Color) {
+			c.pixel, {
+				c.red,
+				c.green,
+				c.blue,
+				0xffff
+			},
+		};
 		return true;
 	}
 	return false;
@@ -648,17 +659,16 @@ loadcolor(CTuple *c, char *str) {
 }
 
 static XftColor*
-xftcolor(ulong col) {
+xftcolor(Color col) {
 	XftColor *c;
 
 	c = emallocz(sizeof *c);
 	*c = (XftColor) {
-		col, {
-			(col>>8)  & 0xff00,
-			(col>>0)  & 0xff00,
-			(col<<8)  & 0xff00,
-			(col>>16) & 0xff00,
-		}
+			  ((col.render.alpha&0xff00) << 24)
+			| ((col.render.red&0xff00) << 8)
+			| ((col.render.green&0xff00) << 0)
+			| ((col.render.blue&0xff00) >> 8),
+		col.render
 	};
 	return freelater(c);
 }
@@ -745,24 +755,42 @@ freefont(Font *f) {
 	free(f);
 }
 
-uint
-textwidth_l(Font *font, char *text, uint len) {
+Rectangle
+textextents_l(Font *font, char *text, uint len, int *offset) {
+	Rectangle rect;
 	XRectangle r;
 	XGlyphInfo i;
+	int unused;
+
+	if(!offset)
+		offset = &unused;
 
 	switch(font->type) {
 	case FFontSet:
-		Xutf8TextExtents(font->font.set, text, len, nil, &r);
-		return r.width;
+		*offset = Xutf8TextExtents(font->font.set, text, len, &r, nil);
+		return Rect(r.x, -r.y - r.height, r.x + r.width, -r.y);
 	case FXft:
 		XftTextExtentsUtf8(display, font->font.xft, (uchar*)text, len, &i);
-		return i.width;
+		*offset = i.xOff;
+		return Rect(-i.x, i.y - i.height, -i.x + i.width, i.y);
 	case FX11:
-		return XTextWidth(font->font.x11, text, len);
+		rect = ZR;
+		rect.max.x = XTextWidth(font->font.x11, text, len);
+		rect.max.y = font->ascent;
+		*offset = rect.max.x;
+		return rect;
 	default:
 		die("Invalid font type");
-		return 0; /* shut up ken */
+		return ZR; /* shut up ken */
 	}
+}
+
+uint
+textwidth_l(Font *font, char *text, uint len) {
+	Rectangle r;
+
+	r = textextents_l(font, text, len, nil);
+	return Dx(r);
 }
 
 uint
@@ -772,7 +800,7 @@ textwidth(Font *font, char *text) {
 
 uint
 labelh(Font *font) {
-	return font->height + 2;
+	return max(font->height + font->descent + font->pad.min.y + font->pad.max.y, 1);
 }
 
 /* Misc */

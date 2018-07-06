@@ -1,5 +1,5 @@
 /* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
- * Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+ * Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #define EXTERN
@@ -157,6 +157,11 @@ ErrorCode ignored_xerrors[] = {
 };
 
 void
+regerror(char *err) {
+	fprint(2, "%s: %s\n", argv0, err);
+}
+
+void
 init_screens(void) {
 	Rectangle *rects;
 	View *v;
@@ -220,6 +225,7 @@ init_screens(void) {
 
 static void
 cleanup(void) {
+	starting = -1;
 	while(client)
 		client_destroy(client);
 	ixp_server_close(&srv);
@@ -327,6 +333,11 @@ closedisplay(IxpConn *c) {
 	XCloseDisplay(display);
 }
 
+static void
+printfcall(IxpFcall *f) {
+	Dprint(D9p, "%F\n", f);
+}
+
 int
 main(int argc, char *argv[]) {
 	IxpMsg m;
@@ -382,6 +393,9 @@ extern int fmtevent(Fmt*);
 	user = estrdup(passwd->pw_name);
 
 	init_environment();
+
+	fmtinstall('F', Ffmt);
+	ixp_printfcall = printfcall;
 
 	sock = ixp_announce(address);
 	if(sock < 0)

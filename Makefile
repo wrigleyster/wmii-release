@@ -1,13 +1,14 @@
 ROOT=.
-include ${ROOT}/mk/hdr.mk
+include $(ROOT)/mk/hdr.mk
+include $(ROOT)/mk/wmii.mk
 
 PDIRS = \
+	doc	     \
+	man	     \
 	cmd	     \
 	libwmii_hack \
 	rc	     \
-	alternative_wmiircs \
-	doc	     \
-	man
+	alternative_wmiircs
 
 DIRS =	\
 	libbio    \
@@ -15,18 +16,18 @@ DIRS =	\
 	libregexp \
 	libutf	  \
 	libixp	  \
-	${PDIRS}
+	$(PDIRS)
 
-config:
-	ROOT="${ROOT}" ${ROOT}/util/genconfig
+DOCS = README \
+       LICENSE
 
 deb-dep:
-	apt-get -qq install build-essential debhelper libxext-dev x11proto-xext-dev libx11-dev libxrandr-dev
+	IFS=', '; \
+	apt-get -qq install build-essential $$(sed -n 's/([^)]*)//; s/^Build-Depends: \(.*\)/\1/p' debian/control)
 
 deb:
-	dpkg-buildpackage -rfakeroot
+	dpkg-buildpackage -rfakeroot -b -nc
 
 include ${ROOT}/mk/dir.mk
-INSTDIRS = ${PDIRS}
-.PHONY: config
+INSTDIRS = $(PDIRS)
 

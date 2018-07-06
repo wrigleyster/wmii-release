@@ -1,4 +1,4 @@
-/* Copyright ©2006-2009 Kris Maglione <fbsdaemon@gmail.com>
+/* Copyright ©2006-2010 Kris Maglione <fbsdaemon@gmail.com>
  * See LICENSE file for license details.
  */
 #define IXP_NO_P9_
@@ -149,8 +149,9 @@ void
 update_input(void) {
 	if(alwaysprint) {
 		write(1, input.string, input.pos - input.string);
-		write(1, "", 1);
-		write(1, input.pos, input.end - input.pos + 1);
+		write(1, "\n", 1);
+		write(1, input.pos, input.end - input.pos);
+		write(1, "\n", 1);
 	}
 }
 
@@ -292,6 +293,8 @@ main(int argc, char *argv[]) {
 	loadcolor(&cnorm, readctl("normcolors "));
 	loadcolor(&csel, readctl("focuscolors "));
 	font = loadfont(readctl("font "));
+	sscanf(readctl("fontpad "), "%d %d %d %d", &font->pad.min.x, &font->pad.max.x,
+	       &font->pad.min.x, &font->pad.max.y);
 	if(!font)
 		fatal("Can't load font %q", readctl("font "));
 

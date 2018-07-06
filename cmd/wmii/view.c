@@ -1,5 +1,5 @@
 /* Copyright ©2004-2006 Anselm R. Garbe <garbeam at gmail dot com>
- * Copyright ©2006-2009 Kris Maglione <maglione.k at Gmail>
+ * Copyright ©2006-2010 Kris Maglione <maglione.k at Gmail>
  * See LICENSE file for license details.
  */
 #include "dat.h"
@@ -96,7 +96,7 @@ view_create(const char *name) {
 	/* FIXME: Can do better. */
 	for(c=client; c; c=c->next)
 		if(c != kludge)
-			apply_tags(c, c->tags);
+			client_applytags(c, c->tags);
 
 	view_arrange(v);
 	if(!selview)
@@ -132,7 +132,7 @@ view_destroy(View *v) {
 	/* Detach frames held here by regex tags. */
 	/* FIXME: Can do better. */
 	foreach_frame(v, s, a, f)
-		apply_tags(f->client, f->client->tags);
+		client_applytags(f->client, f->client->tags);
 
 	foreach_area(v, s, a)
 		area_destroy(a);
